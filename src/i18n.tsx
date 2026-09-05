@@ -316,10 +316,71 @@ Sendina · ваш путь от идеи к результату|Sendina · from
 нет|no
 активна|active
 %|%
+Разрешено правилами|Allowed by policy
+Аварийная остановка|Emergency stop
+Кампания не активна|Campaign is not active
+Адресат исключён|Recipient excluded
+Ответ уже получен|Reply already received
+Повтор адреса в другой кампании|Address repeated in another campaign
+Нет правового основания|No legal ground
+Нет причины контакта — похоже на спам|No contact reason — looks like spam
+Источник не подтверждён|Source not verified
+Домен не проверен|Domain not verified
+Исчерпан лимит домена|Domain limit reached
+Не подтверждено:|Unverified:
+Повторяющихся адресов из других кампаний:|Addresses repeated from other campaigns:
+Правила заблокируют их при подготовке писем.|Policy will block them when messages are prepared.
+Найти адресатов|Find recipients
+Подготовить письма|Prepare messages
+Импорт JSON|JSON import
+Поиск адресатов завершён|Recipient research finished
+Адресаты кампании|Campaign recipients
+Адресаты|Recipients
+Подтверждение адресата|Confirm a recipient
+Поиск в интернете|Web search
+Предложения модели без поиска|Model proposals without search
+Добавлено:|Added:
+Повторов пропущено:|Duplicates skipped:
+Подтверждено источником:|Confirmed by a source:
+Адресатов пока нет. Запустите поиск или импортируйте JSON.|No recipients yet. Run the research or import JSON.
+Не подтверждён|Unverified
+Подтверждён|Verified
+Адрес не подтверждён|Address not verified
+Подтвердить адресата|Confirm recipient
+Подтверждение требует настоящего адреса, ссылки на источник и доказательства. До него правила запрещают отправку.|Confirmation requires a real address, a source link and evidence. Until then policy blocks sending.
+Где именно проверен адрес|Where the address was checked
+Адресат подтверждён|Recipient confirmed
+Доказательство|Evidence
+Сначала найдите или импортируйте адресатов.|Find or import recipients first.
+Похоже на спам: у адресата нет конкретной причины контакта, поэтому письмо получилось общим.|Looks like spam: this recipient has no specific contact reason, so the message came out generic.
+Причина контакта:|Contact reason:
+не указана|not given
+Решение правил|Policy decision
+источник не подтверждён|source not verified
+источник подтверждён|source verified
+Писем в предпросмотре:|Messages in preview:
+Отправка отключена.|Sending is disabled.
+Поиск адресатов|Recipient research
+Подключён поиск в интернете: у кандидатов будет настоящая ссылка на источник.|Web search is connected: candidates will carry a real source link.
+Поисковый API не подключён. Модель может предлагать кандидатов, но они остаются неподтверждёнными.|No search API connected. The model may propose candidates, but they stay unverified.
+Режим поиска адресатов|Recipient research mode
+Автоматически|Automatic
+Предложения модели|Model proposals
+Модель:|Model:
+Поиск:|Search:
+не подключена|not connected
+не подключён|not connected
+Режим сохранён|Mode saved
+Поиск адресатов и подготовка писем работают через подключённую модель. SMTP и автоматический приём писем ещё не подключены, отправка отключена.|Recipient research and message preparation run through the connected model. SMTP and automatic reply intake are not connected yet, and sending is disabled.
+Для поиска адресатов подключите сервер в настройках.|Connect a server in Settings to find recipients.
+Для подтверждения адресата подключите сервер в настройках.|Connect a server in Settings to confirm a recipient.
+Адрес|Address
+Источник|Source
 `;
 export const dictionary:Record<string,string>=Object.fromEntries(pairs.trim().split('\n').map(line=>line.split('|')));
 const ordered=Object.keys(dictionary).filter(k=>/[А-Яа-яЁё]/.test(k)).sort((a,b)=>b.length-a.length);
-const pattern=new RegExp(ordered.map(k=>k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|'),'g');
+// Word boundaries keep a short key such as "Адрес" from being replaced inside "Адресаты".
+const pattern=new RegExp('(?<![А-Яа-яЁё])(?:'+ordered.map(k=>k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|')+')(?![А-Яа-яЁё])','g');
 export function translate(text:string,locale:Locale){if(locale==='ru')return text;return dictionary[text]??text.replace(pattern,key=>dictionary[key]);}
 /** Translate presentation text while preserving option values, form data and handlers. */
 export function localize(node:React.ReactNode,locale:Locale):React.ReactNode{

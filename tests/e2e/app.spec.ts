@@ -35,5 +35,8 @@ test('every dialog is fully translated in English',async({page})=>{
  await nav('Opportunities');
  await page.getByRole('button',{name:'Reasoning'}).first().click();await check('opportunity');
  await nav('Campaigns');
- await page.locator('table .row-link').first().click();await check('campaign');
+ await page.locator('table .row-link').first().click();
+ await expect(dialog).toBeVisible();
+ expect((await dialog.innerText()).match(/[А-Яа-яЁё]+/g),'Untranslated text in the campaign dialog').toBeNull();
+ await dialog.getByRole('button',{name:/^Recipients/}).click();await check('recipients');
 });

@@ -7,7 +7,8 @@ export async function demoApi(path:string,body?:any){
  const log=(action:string)=>s.audit.unshift({id:crypto.randomUUID(),at:new Date().toISOString(),action});
  let result:any={ok:true};
  if(path==='/state')return s;
- if(path==='/integrations')return {mcp:{endpoint:'Not configured',authentication:'Not configured',ready:false,transport:'Streamable HTTP',tools:['get_dashboard','list_campaigns','list_opportunities','get_campaign','create_campaign','import_contacts','preview_campaign','set_campaign_status','emergency_stop','exclude_recipient']}};
+ if(path==='/capabilities')return {ai:{ready:false,model:''},search:{ready:false,provider:''},recipients:{setting:s.settings?.recipientMode??'auto',effective:'proposal'},sendingEnabled:false};
+if(path==='/integrations')return {mcp:{endpoint:'Not configured',authentication:'Not configured',ready:false,transport:'Streamable HTTP',tools:['get_dashboard','list_campaigns','list_opportunities','get_campaign','create_campaign','import_contacts','preview_campaign','set_campaign_status','emergency_stop','exclude_recipient']}};
  if(path==='/campaigns'){
   const c=z.object({name:z.string().min(3).max(150),market:z.string().min(1),goal:z.string().min(1),context:z.string().min(10).max(5000),event:z.string().min(1)}).parse(body);
   result={...c,id:crypto.randomUUID(),status:'draft',sent:0,positive:0,value:0};s.campaigns.unshift(result);log(`Создана кампания «${c.name}»`);
@@ -19,6 +20,9 @@ export async function demoApi(path:string,body?:any){
  }else if(path==='/suppress'){
   const email=z.email().parse(body.email).toLowerCase();if(!s.suppressed.includes(email))s.suppressed.push(email);log(`Глобальное исключение: ${email}`);
  }else if(path.match(/^\/domains\/[^/]+\/check$/))throw Error('Для проверки DNS подключите сервер в настройках.');
+ else if(path.match(/^\/campaigns\/[^/]+\/find$/))throw Error('Для поиска адресатов подключите сервер в настройках.');
+ else if(path==='/contacts/confirm')throw Error('Для подтверждения адресата подключите сервер в настройках.');
+ else if(path==='/settings/recipients'){const mode=z.enum(['auto','search','proposal']).parse(body.mode);s.settings={...s.settings,recipientMode:mode};result={mode,effective:'proposal'};log(`Режим поиска адресатов: ${mode}`);}
  else {
   const match=path.match(/^\/campaigns\/([^/]+)\/(status|contacts|preview)$/);if(!match)throw Error('Для этого действия подключите сервер в настройках.');
   const c=s.campaigns.find(c=>c.id===match[1]);if(!c)throw Error('Кампания не найдена');
@@ -28,7 +32,7 @@ export async function demoApi(path:string,body?:any){
    const contacts=z.array(z.object({email:z.email(),name:z.string().min(1),company:z.string().min(1),source:z.url(),basis:z.string().min(3),reason:z.string().min(10)})).min(1).max(1000).parse(body.contacts);let added=0;
    for(const p of contacts){const email=p.email.toLowerCase();if(!s.contacts.some(x=>x.campaignId===c.id&&x.email===email)){s.contacts.push({...p,email,id:crypto.randomUUID(),campaignId:c.id});added++;}}result={added};log(`Импортировано адресатов: ${added}`);
   }else{
-   result=s.contacts.filter(p=>p.campaignId===c.id).map(p=>{let m=s.messages.find(m=>m.contactId===p.id);if(!m){m={id:crypto.randomUUID(),campaignId:c.id,contactId:p.id,email:p.email,subject:c.name,text:`Здравствуйте, ${p.name}!\n\n${p.reason}\n\n${c.context}\n\nГотовы обсудить следующий шаг: ${c.event.toLowerCase()}?\n\nЕсли предложение неактуально, сообщите об этом — мы прекратим обращения.`,status:'draft'};s.messages.push(m);}return {...m,source:p.source,reason:p.reason,policy:policy({stopped:s.stopped,status:c.status,suppressed:s.suppressed.includes(p.email),replied:s.replies.some(r=>r.email===p.email&&r.campaignId===c.id),basis:p.basis,verified:false,used:0,limit:0})};});
+   result=s.contacts.filter(p=>p.campaignId===c.id).map(p=>{let m=s.messages.find(m=>m.contactId===p.id);if(!m){m={id:crypto.randomUUID(),campaignId:c.id,contactId:p.id,email:p.email,subject:c.name,text:`Здравствуйте, ${p.name}!\n\n${p.reason}\n\n${c.context}\n\nГотовы обсудить следующий шаг: ${c.event.toLowerCase()}?\n\nЕсли предложение неактуально, сообщите об этом — мы прекратим обращения.`,status:'draft'};s.messages.push(m);}return {...m,source:p.source,reason:p.reason,policy:policy({stopped:s.stopped,status:c.status,suppressed:s.suppressed.includes(p.email),replied:s.replies.some(r=>r.email===p.email&&r.campaignId===c.id),basis:p.basis??'',contactReason:p.reason??'',sourceVerified:p.verification!=='unverified',duplicate:false,verified:false,used:0,limit:0})};});
   }
  }
  localStorage.setItem(key,JSON.stringify(s));return result;

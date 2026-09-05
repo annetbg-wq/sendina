@@ -1,5 +1,6 @@
 export const seed = () => ({
   demo:true, stopped:false,
+  settings:{recipientMode:'auto' as 'auto'|'search'|'proposal'},
   campaigns:[
     {id:'c1',name:'Продажи бутик-гостиниц в Европе',market:'США',goal:'Продажа услуги',context:'Автоматизация работы небольшого отеля',event:'Встреча',status:'active',sent:392,positive:24,value:2400},
     {id:'c2',name:'Поиск партнёров для внедрения',market:'Великобритания',goal:'Партнёрство',context:'Совместное внедрение решений',event:'Положительный ответ',status:'active',sent:325,positive:13,value:1300},

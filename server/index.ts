@@ -1,29 +1,37 @@
 import 'dotenv/config';
 import express from 'express';
-import {randomUUID,timingSafeEqual} from 'node:crypto';
-import {resolveTxt} from 'node:dns/promises';
+import {timingSafeEqual} from 'node:crypto';
 import {z} from 'zod';
-import {init,read,change} from './store';
-import {policy} from './policy';
+import {init} from './store';
+import {operations} from './operations';
 import {mountMcp} from './mcp';
+import {mountOauth} from './oauth';
 import {bindAddress} from './config';
 const app=express();app.use(express.json({limit:'1mb'}));
 const origins=new Set(['http://127.0.0.1:5173','http://localhost:5173',`http://127.0.0.1:${process.env.VITE_PORT??5173}`,'http://127.0.0.1:3001',...(process.env.ALLOWED_ORIGINS??'').split(',').filter(Boolean)]);
 app.get('/api/health',(_req,res)=>res.json({ok:true}));
 app.use('/api',(req,res,next)=>{const origin=req.headers.origin;if(origin){if(!origins.has(origin))return res.status(403).json({error:'Недопустимый источник запроса'});res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type');res.setHeader('Access-Control-Allow-Methods','GET, POST, OPTIONS');}if(req.method==='OPTIONS')return res.sendStatus(204);if(process.env.APP_TOKEN){const token=req.headers.authorization?.replace('Bearer ','')??'';const a=Buffer.from(token),b=Buffer.from(process.env.APP_TOKEN);if(a.length!==b.length||!timingSafeEqual(a,b))return res.status(401).json({error:'Требуется токен доступа'});}next();});
 
-const audit=(s:any,action:string)=>s.audit.unshift({id:randomUUID(),at:new Date().toISOString(),action});
-app.get('/api/state',async(_req,res)=>res.json(await read()));
-app.post('/api/campaigns',async(req,res)=>{const body=z.object({name:z.string().min(3).max(150),market:z.string().min(1),goal:z.string().min(1),context:z.string().min(10).max(5000),event:z.string().min(1)}).parse(req.body);res.status(201).json(await change(s=>{const c={...body,id:randomUUID(),status:'draft',sent:0,positive:0,value:0};s.campaigns.unshift(c);audit(s,`Создана кампания «${c.name}»`);return c;}));});
-app.post('/api/campaigns/:id/status',async(req,res)=>{const status=z.enum(['active','paused','draft']).parse(req.body.status);res.json(await change(s=>{const c=s.campaigns.find(c=>c.id===req.params.id);if(!c)throw Error('Кампания не найдена');if(s.stopped&&status==='active')throw Error('Сначала отключите аварийную остановку');c.status=status;audit(s,`Кампания «${c.name}»: ${status}`);return c;}));});
-app.post('/api/stop',async(req,res)=>{const stopped=z.boolean().parse(req.body.stopped);await change(s=>{s.stopped=stopped;if(stopped)s.campaigns.forEach(c=>{if(c.status==='active')c.status='paused';});audit(s,stopped?'Аварийная остановка всех кампаний':'Аварийная остановка снята. Кампании остаются на паузе.');});res.json({ok:true});});
-app.post('/api/domains',async(req,res)=>{const email=z.email().parse(req.body.email).toLowerCase();res.json(await change(s=>{const name=email.split('@')[1];let d=s.domains.find(d=>d.name===name);if(d){if(!d.mailboxes.includes(email))d.mailboxes.push(email);}else{s.domains.push(d={id:randomUUID(),name,verified:false,limit:0,used:0,mailboxes:[email]});}audit(s,`Добавлен ящик ${email}. Требуется проверка DNS и почтового провайдера.`);return d;}));});
-app.post('/api/domains/:id/check',async(req,res)=>{const d=(await read()).domains.find(d=>d.id===req.params.id);if(!d)throw Error('Домен не найден');const selector=z.string().regex(/^[a-zA-Z0-9_-]{1,63}$/).parse(req.body.selector??'default');const lookup=async(n:string)=>{try{return(await resolveTxt(n)).map(r=>r.join(''));}catch{return [];}};const [spf,dkim,dmarc]=await Promise.all([lookup(d.name),lookup(`${selector}._domainkey.${d.name}`),lookup(`_dmarc.${d.name}`)]);const checks={spf:spf.some(v=>v.startsWith('v=spf1')),dkim:dkim.some(v=>v.includes('p=')&&!v.endsWith('p=')),dmarc:dmarc.some(v=>v.startsWith('v=DMARC1'))};await change(s=>audit(s,`DNS ${d.name}: SPF ${checks.spf}, DKIM ${checks.dkim}, DMARC ${checks.dmarc}. Проверка отправителя провайдером ещё требуется.`));res.json(checks);});
-app.post('/api/campaigns/:id/contacts',async(req,res)=>{const contacts=z.array(z.object({email:z.email(),name:z.string().min(1),company:z.string().min(1),source:z.url(),basis:z.string().min(3),reason:z.string().min(10)})).min(1).max(1000).parse(req.body.contacts);res.json(await change(s=>{if(!s.campaigns.some(c=>c.id===req.params.id))throw Error('Кампания не найдена');let added=0;for(const contact of contacts){const email=contact.email.toLowerCase();if(!s.contacts.some(c=>c.campaignId===req.params.id&&c.email===email)){s.contacts.push({...contact,email,id:randomUUID(),campaignId:req.params.id});added++;}}audit(s,`Импортировано адресатов: ${added}`);return {added};}));});
-app.post('/api/campaigns/:id/preview',async(req,res)=>{res.json(await change(s=>{const c=s.campaigns.find(c=>c.id===req.params.id);if(!c)throw Error('Кампания не найдена');const contacts=s.contacts.filter(p=>p.campaignId===c.id);return contacts.map(p=>{let m=s.messages.find(m=>m.contactId===p.id);if(!m){m={id:randomUUID(),campaignId:c.id,contactId:p.id,email:p.email,subject:c.name,text:`Здравствуйте, ${p.name}!\n\n${p.reason}\n\n${c.context}\n\nГотовы обсудить следующий шаг: ${c.event.toLowerCase()}?\n\nЕсли предложение неактуально, сообщите об этом — мы прекратим обращения.`,status:'draft'};s.messages.push(m);}return {...m,source:p.source,reason:p.reason,policy:policy({stopped:s.stopped,status:c.status,suppressed:s.suppressed.includes(p.email),replied:s.replies.some(r=>r.email===p.email&&r.campaignId===c.id),basis:p.basis,verified:false,used:0,limit:0})};});}));});
-app.post('/api/replies',async(req,res)=>{const body=z.object({campaignId:z.string(),email:z.email(),text:z.string().min(1),category:z.enum(['positive','neutral','objection','referral','later','unsubscribe','negative','automatic','bounce']),eventId:z.string().min(1)}).parse(req.body);res.json(await change(s=>{const existing=s.replies.find(r=>r.id===body.eventId);if(existing)return existing;const c=s.campaigns.find(c=>c.id===body.campaignId);if(!c)throw Error('Кампания не найдена');const email=body.email.toLowerCase();if(!s.contacts.some(p=>p.campaignId===c.id&&p.email===email)&&!s.messages.some(m=>m.campaignId===c.id&&m.email===email))throw Error('Адресат не принадлежит кампании');const r={...body,email,id:body.eventId,name:email,company:'',at:new Date().toISOString()};s.replies.unshift(r);if(['unsubscribe','negative'].includes(body.category)&&!s.suppressed.includes(email))s.suppressed.push(email);if(body.category==='positive')c.positive++;audit(s,`Получен ответ ${email}: ${body.category}`);return r;}));});
-app.post('/api/suppress',async(req,res)=>{const email=z.email().parse(req.body.email).toLowerCase();await change(s=>{if(!s.suppressed.includes(email))s.suppressed.push(email);audit(s,`Глобальное исключение: ${email}`);});res.json({ok:true});});
+/** Every route is a thin call into the shared operations layer, the same one MCP uses. */
+const route=(fn:(input:any)=>Promise<unknown>,status=200)=>async(req:express.Request,res:express.Response)=>
+ res.status(status).json(await fn({...req.body,...req.params}));
+
+app.get('/api/state',route(()=>operations.state()));
+app.get('/api/capabilities',route(()=>operations.capabilities()));
+app.post('/api/campaigns',route(i=>operations.createCampaign(i),201));
+app.post('/api/campaigns/:id/status',route(i=>operations.setCampaignStatus(i)));
+app.post('/api/campaigns/:id/contacts',route(i=>operations.importContacts(i)));
+app.post('/api/campaigns/:id/find',route(i=>operations.findRecipients(i)));
+app.post('/api/campaigns/:id/preview',route(i=>operations.prepareMessages(i)));
+app.post('/api/contacts/confirm',route(i=>operations.confirmRecipient(i)));
+app.post('/api/stop',route(i=>operations.emergencyStop(i)));
+app.post('/api/domains',route(i=>operations.addMailbox(i)));
+app.post('/api/domains/:id/check',route(i=>operations.checkDomain(i)));
+app.post('/api/replies',route(i=>operations.recordReply(i)));
+app.post('/api/suppress',route(i=>operations.suppress(i)));
+app.post('/api/settings/recipients',route(i=>operations.setRecipientMode(i)));
 app.post('/api/send',(_req,res)=>res.status(409).json({error:'Отправка не подключена. Требуются проверенный почтовый провайдер, версионированные правила юрисдикций и подтверждение первой партии.'}));
+mountOauth(app);
 mountMcp(app);
 app.use(express.static('dist'));app.get('/{*path}',(_req,res)=>res.sendFile('index.html',{root:'dist'}));
 app.use((err:any,_req:any,res:any,_next:any)=>res.status(err instanceof z.ZodError?400:422).json({error:err instanceof z.ZodError?err.issues.map((i:any)=>`${i.path.join('.')}: ${i.message}`).join('; '):err.message}));

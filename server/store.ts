@@ -3,7 +3,7 @@ import {Pool} from 'pg';
 import {seed,type State} from './seed';
 import {join} from 'node:path';
 const dir=process.env.DATA_DIR??'data';
-const pool=process.env.DATABASE_URL?new Pool({connectionString:process.env.DATABASE_URL}):null;
+export const pool=process.env.DATABASE_URL?new Pool({connectionString:process.env.DATABASE_URL}):null;
 let chain:Promise<unknown>=Promise.resolve();
 export async function init(){
  if(pool){await pool.query('CREATE TABLE IF NOT EXISTS workspace_state (id text PRIMARY KEY, data jsonb NOT NULL)');await pool.query('INSERT INTO workspace_state VALUES ($1,$2) ON CONFLICT DO NOTHING',['local',JSON.stringify(seed())]);}

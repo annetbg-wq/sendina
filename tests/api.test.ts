@@ -37,7 +37,7 @@ test('API and MCP enforce auth, isolate campaigns, deduplicate, preserve exclusi
   await req('/stop',{stopped:true});assert.equal((await req(`/campaigns/${c2.id}/status`,{status:'active'})).status,422);
   assert.equal((await req('/send',{})).status,409);
   await client.connect(new StreamableHTTPClientTransport(new URL(base+'/mcp'),{requestInit:{headers:{Authorization:'Bearer test-mcp-secret'}}}));
-  const tools=await client.listTools();assert.equal(tools.tools.length,10);assert.ok(tools.tools.find(t=>t.name==='get_dashboard')?.annotations?.readOnlyHint);
+  const tools=await client.listTools();assert.equal(tools.tools.length,14);assert.ok(tools.tools.find(t=>t.name==='get_dashboard')?.annotations?.readOnlyHint);
   const dashboard:any=await client.callTool({name:'get_dashboard',arguments:{}});assert.equal(dashboard.structuredContent.result.sendingEnabled,false);
   await client.callTool({name:'emergency_stop',arguments:{stopped:false}});
   s=(await req('/state')).body;assert.equal(s.stopped,false);assert.equal(s.campaigns.find((x:any)=>x.id===c2.id).status,'paused');
