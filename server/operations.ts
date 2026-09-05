@@ -2,6 +2,8 @@ import {randomUUID} from 'node:crypto';
 import {resolveTxt} from 'node:dns/promises';
 import {z} from 'zod';
 import {read,change,pool} from './store';
+import type {Ctx} from './context';
+import {accountSettings,maskSettings} from './accountsettings';
 import {policy,isBulk} from './policy';
 import {findRecipients,resolveMode} from './recipients';
 import {aiReady,aiModel} from './ai';
@@ -58,65 +60,68 @@ export const schemas={
 };
 
 export const operations={
- state:()=>read(),
+ state:(ctx:Ctx)=>read(ctx.accountId),
 
- capabilities:async()=>{const s=await read();const setting=s.settings?.recipientMode??'auto';return {
-  ai:{ready:aiReady(),model:aiReady()?aiModel():''},
-  search:{ready:searchReady(),provider:searchProvider()},
-  recipients:{setting,effective:resolveMode(setting)},
+ capabilities:async(ctx:Ctx)=>{const s=await read(ctx.accountId);const config=await accountSettings(ctx.accountId);
+  const setting=s.settings?.recipientMode??'auto';return {
+  account:{email:ctx.email,role:ctx.role},
+  ai:{ready:aiReady(config),model:aiReady(config)?aiModel(config):''},
+  search:{ready:searchReady(config),provider:searchProvider(config)},
+  recipients:{setting,effective:resolveMode(setting,searchReady(config))},
+  connections:maskSettings(config),
   storage:{postgres:Boolean(pool),durable:Boolean(pool)},
   sendingEnabled:false};},
 
- dashboard:async()=>{const s=await read();return {demo:s.demo,stopped:s.stopped,campaigns:s.campaigns.length,
+ dashboard:async(ctx:Ctx)=>{const s=await read(ctx.accountId);return {demo:s.demo,stopped:s.stopped,campaigns:s.campaigns.length,
   contacts:s.contacts.length,messages:s.messages.length,replies:s.replies.length,
   sent:s.campaigns.reduce((n,c)=>n+c.sent,0),positive:s.campaigns.reduce((n,c)=>n+c.positive,0),
   suppressed:s.suppressed.length,sendingEnabled:false};},
 
- getCampaign:async(input:unknown)=>{const {id}=schemas.campaignId.parse(input);const s=await read();
+ getCampaign:async(ctx:Ctx,input:unknown)=>{const {id}=schemas.campaignId.parse(input);const s=await read(ctx.accountId);
   return {campaign:campaignOf(s,id),contacts:s.contacts.filter(c=>c.campaignId===id),
    messages:s.messages.filter(m=>m.campaignId===id),replies:s.replies.filter(r=>r.campaignId===id),
    duplicates:duplicateEmails(s,id)};},
 
- listCampaigns:async()=>(await read()).campaigns,
- listOpportunities:async()=>({demo:true,opportunities:(await read()).opportunities}),
+ listCampaigns:async(ctx:Ctx)=>(await read(ctx.accountId)).campaigns,
+ listOpportunities:async(ctx:Ctx)=>({demo:true,opportunities:(await read(ctx.accountId)).opportunities}),
 
- createCampaign:(input:unknown)=>{const body=schemas.createCampaign.parse(input);
-  return change(s=>{const c={...body,id:randomUUID(),status:'draft',sent:0,positive:0,value:0};
+ createCampaign:(ctx:Ctx,input:unknown)=>{const body=schemas.createCampaign.parse(input);
+  return change(ctx.accountId,s=>{const c={...body,id:randomUUID(),status:'draft',sent:0,positive:0,value:0};
    s.campaigns.unshift(c);audit(s,`Создана кампания «${c.name}»`);return c;});},
 
- setCampaignStatus:(input:unknown)=>{const {id,status}=schemas.setStatus.parse(input);
-  return change(s=>{const c=campaignOf(s,id);
+ setCampaignStatus:(ctx:Ctx,input:unknown)=>{const {id,status}=schemas.setStatus.parse(input);
+  return change(ctx.accountId,s=>{const c=campaignOf(s,id);
    if(s.stopped&&status==='active')throw Error('Сначала отключите аварийную остановку');
    const duplicates=status==='active'?duplicateEmails(s,id):[];
    c.status=status;audit(s,`Кампания «${c.name}»: ${status}`);
    if(duplicates.length)audit(s,`Проверка повторов при продолжении «${c.name}»: ${duplicates.length}. Эти адресаты заблокированы правилами.`);
    return {campaign:c,duplicates};});},
 
- emergencyStop:(input:unknown)=>{const {stopped}=schemas.stop.parse(input);
-  return change(s=>{s.stopped=stopped;if(stopped)s.campaigns.forEach(c=>{if(c.status==='active')c.status='paused';});
+ emergencyStop:(ctx:Ctx,input:unknown)=>{const {stopped}=schemas.stop.parse(input);
+  return change(ctx.accountId,s=>{s.stopped=stopped;if(stopped)s.campaigns.forEach(c=>{if(c.status==='active')c.status='paused';});
    audit(s,stopped?'Аварийная остановка всех кампаний':'Аварийная остановка снята. Кампании остаются на паузе.');return {ok:true,stopped};});},
 
- addMailbox:(input:unknown)=>{const email=schemas.mailbox.parse(input).email.toLowerCase();
-  return change(s=>{const name=email.split('@')[1];let d=s.domains.find(d=>d.name===name);
+ addMailbox:(ctx:Ctx,input:unknown)=>{const email=schemas.mailbox.parse(input).email.toLowerCase();
+  return change(ctx.accountId,s=>{const name=email.split('@')[1];let d=s.domains.find(d=>d.name===name);
    if(!d)s.domains.push(d={id:randomUUID(),name,limit:0,used:0,dns:noDns(),mailboxes:[]});
    if(!d.mailboxes.some(m=>m.email===email))d.mailboxes.push(box(email));
    audit(s,`Добавлен ящик ${email}. Ящик не подключён: нужны подключение провайдера и тестовая отправка.`);
    return {...d,readiness:domainReadiness(d,s.stopped)};});},
 
- checkDomain:async(input:unknown)=>{const {id,selector}=schemas.domainCheck.parse(input);
-  const d=(await read()).domains.find(d=>d.id===id);if(!d)throw Error('Домен не найден');
+ checkDomain:async(ctx:Ctx,input:unknown)=>{const {id,selector}=schemas.domainCheck.parse(input);
+  const d=(await read(ctx.accountId)).domains.find(d=>d.id===id);if(!d)throw Error('Домен не найден');
   const lookup=async(n:string)=>{try{return (await resolveTxt(n)).map(r=>r.join(''));}catch{return [];}};
   const [spf,dkim,dmarc]=await Promise.all([lookup(d.name),lookup(`${selector}._domainkey.${d.name}`),lookup(`_dmarc.${d.name}`)]);
   const checks={spf:spf.some(v=>v.startsWith('v=spf1')),dkim:dkim.some(v=>v.includes('p=')&&!v.endsWith('p=')),dmarc:dmarc.some(v=>v.startsWith('v=DMARC1'))};
   // A DNS record is evidence about the domain. It is never a connection and never grants readiness.
-  return change(s=>{const target=s.domains.find(x=>x.id===id)!;
+  return change(ctx.accountId,s=>{const target=s.domains.find(x=>x.id===id)!;
    target.dns={...checks,checkedAt:new Date().toISOString()};
    audit(s,`DNS ${d.name}: SPF ${checks.spf}, DKIM ${checks.dkim}, DMARC ${checks.dmarc}. Это не подключение ящика.`);
    return {...checks,readiness:domainReadiness(target,s.stopped)};});},
 
  /** Manual JSON import stays available as a secondary route to the same store. */
- importContacts:(input:unknown)=>{const {id,contacts}=schemas.importContacts.parse(input);
-  return change(s=>{campaignOf(s,id);let added=0;
+ importContacts:(ctx:Ctx,input:unknown)=>{const {id,contacts}=schemas.importContacts.parse(input);
+  return change(ctx.accountId,s=>{campaignOf(s,id);let added=0;
    for(const contact of contacts){const email=contact.email.toLowerCase();
     if(s.contacts.some(c=>c.campaignId===id&&c.email===email))continue;
     s.contacts.push({...contact,email,id:randomUUID(),campaignId:id,role:'',country:'',evidence:'Импортировано вручную',
@@ -124,11 +129,11 @@ export const operations={
    audit(s,`Импортировано адресатов вручную: ${added}`);return {added,skipped:contacts.length-added};});},
 
  /** Research runs outside the write lock, then the result is committed once. */
- findRecipients:async(input:unknown)=>{const {id,count,mode}=schemas.findRecipients.parse(input);
-  const before=await read();const campaign=campaignOf(before,id);
+ findRecipients:async(ctx:Ctx,input:unknown)=>{const {id,count,mode}=schemas.findRecipients.parse(input);
+  const before=await read(ctx.accountId);const campaign=campaignOf(before,id);
   const setting=mode??before.settings?.recipientMode??'auto';
-  const result=await findRecipients(campaign,setting,count);
-  return change(s=>{campaignOf(s,id);let added=0,skipped=0;
+  const result=await findRecipients(campaign,setting,count,await accountSettings(ctx.accountId));
+  return change(ctx.accountId,s=>{campaignOf(s,id);let added=0,skipped=0;
    for(const c of result.candidates){
     const email=c.email?.toLowerCase()??null;
     if(email&&s.contacts.some(x=>x.campaignId===id&&x.email===email)){skipped++;continue;}
@@ -141,16 +146,16 @@ export const operations={
     verified:result.candidates.filter(c=>c.verification==='verified').length};});},
 
  /** Confirms a proposed recipient against real evidence supplied by the operator or a connector. */
- confirmRecipient:(input:unknown)=>{const body=schemas.confirmRecipient.parse(input);
-  return change(s=>{const p=s.contacts.find(c=>c.id===body.contactId);if(!p)throw Error('Адресат не найден');
+ confirmRecipient:(ctx:Ctx,input:unknown)=>{const body=schemas.confirmRecipient.parse(input);
+  return change(ctx.accountId,s=>{const p=s.contacts.find(c=>c.id===body.contactId);if(!p)throw Error('Адресат не найден');
    const email=body.email.toLowerCase();
    if(s.contacts.some(c=>c.campaignId===p.campaignId&&c.email===email&&c.id!==p.id))throw Error('Такой адрес уже есть в кампании');
    Object.assign(p,{email,source:body.source,evidence:body.evidence,verification:'verified'});
    audit(s,`Адресат подтверждён: ${email}`);return p;});},
 
  /** Prepares drafts and a policy decision per recipient. Repeating it never duplicates a draft. */
- prepareMessages:(input:unknown)=>{const {id,limit}=schemas.prepare.parse(input);
-  return change(s=>{const c=campaignOf(s,id);const duplicates=duplicateEmails(s,id);
+ prepareMessages:(ctx:Ctx,input:unknown)=>{const {id,limit}=schemas.prepare.parse(input);
+  return change(ctx.accountId,s=>{const c=campaignOf(s,id);const duplicates=duplicateEmails(s,id);
    const sender=senderDomain(s);
    const contacts=s.contacts.filter(p=>p.campaignId===id).slice(0,limit);
    return contacts.map(p=>{const draft=compose(c,p);
@@ -161,8 +166,8 @@ export const operations={
      verification:p.verification,confidence:p.confidence,origin:p.origin,
      sender:sender?.name??'',policy:decide(s,c,p,duplicates,sender)};});});},
 
- recordReply:(input:unknown)=>{const body=schemas.reply.parse(input);
-  return change(s=>{const existing=s.replies.find(r=>r.id===body.eventId);if(existing)return existing;
+ recordReply:(ctx:Ctx,input:unknown)=>{const body=schemas.reply.parse(input);
+  return change(ctx.accountId,s=>{const existing=s.replies.find(r=>r.id===body.eventId);if(existing)return existing;
    const c=campaignOf(s,body.campaignId);const email=body.email.toLowerCase();
    if(!s.contacts.some(p=>p.campaignId===c.id&&p.email===email)&&!s.messages.some(m=>m.campaignId===c.id&&m.email===email))throw Error('Адресат не принадлежит кампании');
    const r={...body,email,id:body.eventId,name:email,company:'',at:new Date().toISOString()};
@@ -171,12 +176,13 @@ export const operations={
    if(body.category==='positive')c.positive++;
    audit(s,`Получен ответ ${email}: ${body.category}`);return r;});},
 
- suppress:(input:unknown)=>{const email=schemas.suppress.parse(input).email.toLowerCase();
-  return change(s=>{if(!s.suppressed.includes(email))s.suppressed.push(email);
+ suppress:(ctx:Ctx,input:unknown)=>{const email=schemas.suppress.parse(input).email.toLowerCase();
+  return change(ctx.accountId,s=>{if(!s.suppressed.includes(email))s.suppressed.push(email);
    audit(s,`Глобальное исключение: ${email}`);return {ok:true,email};});},
 
- setRecipientMode:(input:unknown)=>{const {mode}=schemas.recipientMode.parse(input);
-  return change(s=>{s.settings={...s.settings,recipientMode:mode};
-   audit(s,`Режим поиска адресатов: ${mode}`);return {mode,effective:resolveMode(mode)};});}
+ setRecipientMode:async(ctx:Ctx,input:unknown)=>{const {mode}=schemas.recipientMode.parse(input);
+  const available=searchReady(await accountSettings(ctx.accountId));
+  return change(ctx.accountId,s=>{s.settings={...s.settings,recipientMode:mode};
+   audit(s,`Режим поиска адресатов: ${mode}`);return {mode,effective:resolveMode(mode,available)};});}
 };
 export type Operations=typeof operations;

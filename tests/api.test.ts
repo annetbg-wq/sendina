@@ -4,18 +4,24 @@ import {spawn} from 'node:child_process';
 import {mkdtemp} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
+import {smtpStub} from './smtpstub';
+import {signIn,platformEnv} from './session';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 test('API and MCP enforce auth, isolate campaigns, deduplicate, preserve exclusions and stop safely',async()=>{
  const dir=await mkdtemp(join(tmpdir(),'sendina-test-'));
- const child=spawn(process.execPath,['--import','tsx',resolve('server/index.ts')],{env:{...process.env,PORT:'3102',DATA_DIR:dir,DATABASE_URL:'',APP_TOKEN:'test-ui-secret',MCP_TOKEN:'test-mcp-secret',OAUTH_ISSUER:'',OAUTH_JWKS_URL:''},stdio:'pipe'});
+ const smtp=smtpStub(3194);
+ await smtp.listen();
+ const child=spawn(process.execPath,['--import','tsx',resolve('server/index.ts')],{env:{...process.env,PORT:'3102',DATA_DIR:dir,DATABASE_URL:'',APP_TOKEN:'test-platform-secret',MCP_TOKEN:'test-mcp-secret',MCP_ACCOUNT_EMAIL:'operator@example.com',OAUTH_ISSUER:'',OAUTH_JWKS_URL:'',PUBLIC_URL:'http://127.0.0.1:3102',APP_URL:'http://127.0.0.1:3102',...platformEnv(3194,'operator@example.com')},stdio:'pipe'});
  let logs='';child.stderr.on('data',d=>logs+=d);child.stdout.on('data',d=>logs+=d);
  const base='http://127.0.0.1:3102';
- const req=async(path:string,body?:unknown)=>{const r=await fetch(base+'/api'+path,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer test-ui-secret'},body:body===undefined?undefined:JSON.stringify(body)});return {status:r.status,body:await r.json()};};
+ let uiToken='';
+ const req=async(path:string,body?:unknown)=>{const r=await fetch(base+'/api'+path,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${uiToken}`},body:body===undefined?undefined:JSON.stringify(body)});return {status:r.status,body:await r.json()};};
  const client=new Client({name:'sendina-test',version:'1.0'});
  try{
   let ready=false;for(let i=0;i<100;i++){try{await fetch(base+'/api/state');ready=true;break;}catch{await new Promise(r=>setTimeout(r,100));}}assert.ok(ready,logs);
   assert.equal((await fetch(base+'/api/state')).status,401);
+  uiToken=await signIn(base,smtp,'operator@example.com');
   assert.equal((await fetch(base+'/mcp',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).status,401);
   assert.equal((await req('/campaigns',{name:'x'})).status,400);
   const input={name:'Integration test',market:'United States',goal:'Partnership',context:'A verified context for the campaign',event:'Meeting'};
@@ -44,5 +50,5 @@ test('API and MCP enforce auth, isolate campaigns, deduplicate, preserve exclusi
   const dashboard:any=await client.callTool({name:'get_dashboard',arguments:{}});assert.equal(dashboard.structuredContent.result.sendingEnabled,false);
   await client.callTool({name:'emergency_stop',arguments:{stopped:false}});
   s=(await req('/state')).body;assert.equal(s.stopped,false);assert.equal(s.campaigns.find((x:any)=>x.id===c2.id).status,'paused');
- }finally{await client.close();child.kill();}
+ }finally{await client.close();child.kill();smtp.server.close();}
 });

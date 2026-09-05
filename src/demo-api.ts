@@ -7,7 +7,10 @@ export async function demoApi(path:string,body?:any){
  const log=(action:string)=>s.audit.unshift({id:crypto.randomUUID(),at:new Date().toISOString(),action});
  let result:any={ok:true};
  if(path==='/state')return s;
- if(path==='/capabilities')return {ai:{ready:false,model:''},search:{ready:false,provider:''},recipients:{setting:s.settings?.recipientMode??'auto',effective:'proposal'},storage:{postgres:false,durable:false},sendingEnabled:false};
+ if(path==='/auth/request')return {status:'demo',message:'Это демонстрация в браузере: вход не требуется. Подключите сервер, чтобы работать под своим аккаунтом.'};
+ if(path==='/settings/connections')return {openai:{configured:false,model:'',gateway:''},search:{provider:'',configured:false},google:{configured:false},microsoft:{configured:false,tenant:'common'}};
+ if(path==='/accounts')return [];
+ if(path==='/capabilities')return {ai:{ready:false,model:''},search:{ready:false,provider:''},recipients:{setting:s.settings?.recipientMode??'auto',effective:'proposal'},account:null,connections:{openai:{configured:false,model:'',gateway:''},search:{provider:'',configured:false},google:{configured:false},microsoft:{configured:false,tenant:'common'}},storage:{postgres:false,durable:false},sendingEnabled:false};
 if(path==='/integrations')return {mcp:{endpoint:'Not configured',authentication:'Not configured',ready:false,transport:'Streamable HTTP',tools:['get_dashboard','list_campaigns','list_opportunities','get_campaign','create_campaign','import_contacts','preview_campaign','set_campaign_status','emergency_stop','exclude_recipient']}};
  if(path==='/campaigns'){
   const c=z.object({name:z.string().min(3).max(150),market:z.string().min(1),goal:z.string().min(1),context:z.string().min(10).max(5000),event:z.string().min(1)}).parse(body);
@@ -23,6 +26,7 @@ if(path==='/integrations')return {mcp:{endpoint:'Not configured',authentication:
  }else if(path.match(/^\/domains\/[^/]+\/check$/))throw Error('Для проверки DNS подключите сервер в настройках.');
  else if(path.match(/^\/campaigns\/[^/]+\/find$/))throw Error('Для поиска адресатов подключите сервер в настройках.');
  else if(path==='/contacts/confirm')throw Error('Для подтверждения адресата подключите сервер в настройках.');
+ else if(path.startsWith('/settings/connections')||path.startsWith('/accounts'))throw Error('Для этого действия подключите сервер в настройках.');
  else if(path.startsWith('/mailboxes/'))throw Error('Для подключения ящика подключите сервер в настройках.');
  else if(path==='/settings/recipients'){const mode=z.enum(['auto','search','proposal']).parse(body.mode);s.settings={...s.settings,recipientMode:mode};result={mode,effective:'proposal'};log(`Режим поиска адресатов: ${mode}`);}
  else {

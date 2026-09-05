@@ -1,4 +1,7 @@
 import {test,expect} from '@playwright/test';
+
+// These check the interface itself, so they run against the browser demo rather than an account.
+test.beforeEach(async({page})=>{await page.addInitScript(()=>localStorage.setItem('sendina-api-url',''));});
 test('RU/EN switch covers every screen, survives reload and preserves form values',async({page})=>{
  await page.goto('/');await expect(page.getByRole('heading',{name:'Что вы хотите получить сегодня?'})).toBeVisible();
  await page.getByRole('button',{name:'Язык интерфейса'}).click();

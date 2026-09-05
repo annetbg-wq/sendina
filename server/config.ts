@@ -27,3 +27,8 @@ export function resourceAddress(env:Record<string,string|undefined>){
  try{if(configured&&new URL(configured).origin===new URL(base).origin)return configured;}catch{}
  return `${base}/mcp`;
 }
+
+/** Where the interface lives. On GitHub Pages that is a different origin from the API. */
+export function appAddress(env:Record<string,string|undefined>){
+ return (env.APP_URL||publicAddress(env)).replace(/\/$/,'');
+}

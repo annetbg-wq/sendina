@@ -4,16 +4,16 @@ import {randomUUID,randomBytes,createHash,timingSafeEqual} from 'node:crypto';
 import {generateKeyPair,exportPKCS8,exportJWK,importPKCS8,importJWK,SignJWT,jwtVerify,type CryptoKey,type JWTPayload} from 'jose';
 import {getAuth,setAuth} from './authstore';
 import {publicAddress,resourceAddress} from './config';
+import {accountForConnectorCode} from './accounts';
 
 /** Built-in OAuth 2.1 authorization server: PKCE, dynamic client registration, signed access tokens. */
 export const publicUrl=()=>publicAddress(process.env);
 export const resourceUrl=()=>resourceAddress(process.env);
-/** An external issuer wins; otherwise the built-in server runs whenever an operator token exists. */
-export const oauthEnabled=()=>!process.env.OAUTH_ISSUER&&Boolean(process.env.APP_TOKEN);
-export const oauthSubject=()=>process.env.MCP_SUBJECT??'sendina-workspace';
+/** An external issuer wins; otherwise the built-in server runs. */
+export const oauthEnabled=()=>!process.env.OAUTH_ISSUER;
 
 type Client={client_id:string;client_name:string;redirect_uris:string[];registered:string};
-type Grant={client_id:string;redirect_uri:string;challenge:string;scope:string;expires:number};
+type Grant={client_id:string;redirect_uri:string;challenge:string;scope:string;accountId:string;expires:number};
 const codes=new Map<string,Grant>();
 
 let keyPromise:Promise<{privateKey:CryptoKey;publicKey:CryptoKey;jwk:Record<string,string>;kid:string}>|null=null;
@@ -37,26 +37,27 @@ function keys(){
 const same=(a:string,b:string)=>{const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length&&timingSafeEqual(x,y);};
 const clients=async()=>(await getAuth<Record<string,Client>>('clients'))??{};
 
-export async function issueAccessToken(scope:string,ttl=3600){
+/** The subject is the account, so a connector reaches exactly one workspace. */
+export async function issueAccessToken(scope:string,accountId:string,ttl=3600){
  const {privateKey,kid}=await keys();
  return new SignJWT({scope}).setProtectedHeader({alg:'RS256',kid})
-  .setIssuer(publicUrl()).setAudience(resourceUrl()).setSubject(oauthSubject())
+  .setIssuer(publicUrl()).setAudience(resourceUrl()).setSubject(accountId)
   .setIssuedAt().setExpirationTime(`${ttl}s`).setJti(randomUUID()).sign(privateKey);
 }
 /** Verifies a token this server issued, without a network round trip to its own JWKS. */
 export async function verifyLocalToken(token:string):Promise<JWTPayload>{
  const {publicKey}=await keys();
  const {payload}=await jwtVerify(token,publicKey,{issuer:publicUrl(),audience:resourceUrl(),requiredClaims:['exp','sub']});
- if(payload.sub!==oauthSubject())throw Error('Unbound workspace');
+ if(!payload.sub)throw Error('Unbound workspace');
  return payload;
 }
 
 const strings={
  ru:{title:'Доступ к рабочей области',lead:'Клиент запрашивает доступ к Sendina. Подтвердите его токеном доступа рабочей области.',
-  token:'Токен доступа',grant:'Разрешить доступ',scope:'Запрошенные права',wrong:'Неверный токен доступа',
+  token:'Код коннектора',hint:'Код показан в Sendina на экране «Настройки».',grant:'Разрешить доступ',scope:'Запрошенные права',wrong:'Неверный код коннектора',
   read:'чтение кампаний, адресатов, писем и ответов',write:'создание кампаний, поиск адресатов и подготовка писем'},
  en:{title:'Workspace access',lead:'A client is requesting access to Sendina. Confirm it with your workspace access token.',
-  token:'Access token',grant:'Grant access',scope:'Requested permissions',wrong:'Wrong access token',
+  token:'Connector code',hint:'The code is shown in Sendina on the Settings screen.',grant:'Grant access',scope:'Requested permissions',wrong:'Wrong connector code',
   read:'read campaigns, recipients, messages and replies',write:'create campaigns, find recipients and prepare messages'}
 };
 const escape=(s:string)=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
@@ -78,7 +79,8 @@ ${error?`<div class="err">${escape(error)}</div>`:''}
 <strong style="font-size:12px">${t.scope}</strong>
 <ul>${scopes.includes('sendina:write')?`<li>${t.write}</li>`:''}<li>${t.read}</li></ul>
 ${Object.entries(params).map(([k,v])=>`<input type="hidden" name="${escape(k)}" value="${escape(v)}"/>`).join('')}
-<label for="token">${t.token}</label><input id="token" name="operator_token" type="password" autofocus required/>
+<label for="token">${t.token}</label><input id="token" name="connector_code" type="password" autofocus required/>
+<p style="margin:8px 0 0;font-size:12px">${t.hint}</p>
 <button type="submit">${t.grant}</button></form></body></html>`;
 };
 
@@ -123,10 +125,11 @@ export function mountOauth(app:Express){
   if(!client||!client.redirect_uris.includes(p.redirect_uri))return res.status(400).json({error:'invalid_client'});
   if(p.code_challenge_method!=='S256'||!p.code_challenge)return res.status(400).json({error:'invalid_request'});
   const lang=language(req);
-  if(!same(String(req.body?.operator_token??''),process.env.APP_TOKEN??''))
-   return res.status(401).type('html').send(page(lang,p,client,strings[lang].wrong));
+  const account=await accountForConnectorCode(String(req.body?.connector_code??''));
+  if(!account)return res.status(401).type('html').send(page(lang,p,client,strings[lang].wrong));
   const code=randomBytes(32).toString('base64url');
-  codes.set(code,{client_id:p.client_id,redirect_uri:p.redirect_uri,challenge:p.code_challenge,scope:p.scope,expires:Date.now()+600000});
+  codes.set(code,{client_id:p.client_id,redirect_uri:p.redirect_uri,challenge:p.code_challenge,
+   scope:p.scope,accountId:account.id,expires:Date.now()+600000});
   const target=new URL(p.redirect_uri);target.searchParams.set('code',code);
   if(p.state)target.searchParams.set('state',p.state);
   res.redirect(target.toString());
@@ -136,10 +139,10 @@ export function mountOauth(app:Express){
   const body={...req.body};
   const grantType=String(body.grant_type??'');
   if(grantType==='refresh_token'){
-   const store=(await getAuth<Record<string,{client_id:string;scope:string}>>('refresh'))??{};
+   const store=(await getAuth<Record<string,{client_id:string;scope:string;accountId:string}>>('refresh'))??{};
    const entry=store[String(body.refresh_token??'')];
    if(!entry||entry.client_id!==String(body.client_id??''))return res.status(400).json({error:'invalid_grant'});
-   return res.json({access_token:await issueAccessToken(entry.scope),token_type:'Bearer',expires_in:3600,scope:entry.scope,refresh_token:String(body.refresh_token)});
+   return res.json({access_token:await issueAccessToken(entry.scope,entry.accountId),token_type:'Bearer',expires_in:3600,scope:entry.scope,refresh_token:String(body.refresh_token)});
   }
   if(grantType!=='authorization_code')return res.status(400).json({error:'unsupported_grant_type'});
   const grant=codes.get(String(body.code??''));
@@ -149,8 +152,8 @@ export function mountOauth(app:Express){
   const verifier=String(body.code_verifier??'');
   if(createHash('sha256').update(verifier).digest('base64url')!==grant.challenge)return res.status(400).json({error:'invalid_grant',error_description:'PKCE verification failed'});
   const refresh=randomBytes(32).toString('base64url');
-  const store=(await getAuth<Record<string,{client_id:string;scope:string}>>('refresh'))??{};
-  store[refresh]={client_id:grant.client_id,scope:grant.scope};await setAuth('refresh',store);
-  res.json({access_token:await issueAccessToken(grant.scope),token_type:'Bearer',expires_in:3600,scope:grant.scope,refresh_token:refresh});
+  const store=(await getAuth<Record<string,{client_id:string;scope:string;accountId:string}>>('refresh'))??{};
+  store[refresh]={client_id:grant.client_id,scope:grant.scope,accountId:grant.accountId};await setAuth('refresh',store);
+  res.json({access_token:await issueAccessToken(grant.scope,grant.accountId),token_type:'Bearer',expires_in:3600,scope:grant.scope,refresh_token:refresh});
  });
 }

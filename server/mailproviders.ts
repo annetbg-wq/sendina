@@ -35,19 +35,21 @@ export async function detectProvider(email:string):Promise<Detection>{
 const providerUrl=(url:string)=>{const base=process.env.MAIL_PROVIDER_BASE_URL;
  if(!base)return url;const parsed=new URL(url);return new URL(parsed.pathname+parsed.search,base).toString();};
 
+export type MailApps={google:{clientId:string;clientSecret:string};microsoft:{clientId:string;clientSecret:string;tenant:string}};
 type OauthConfig={authorize:string;token:string;scope:string;clientId:string;clientSecret:string;extra:Record<string,string>};
-export function oauthConfig(provider:Provider):OauthConfig|null{
+/** The OAuth application belongs to the account, so each workspace connects under its own client. */
+export function oauthConfig(provider:Provider,apps:MailApps):OauthConfig|null{
  if(provider==='google'){
-  const clientId=process.env.GOOGLE_CLIENT_ID??'',clientSecret=process.env.GOOGLE_CLIENT_SECRET??'';
+  const {clientId,clientSecret}=apps.google;
   if(!clientId||!clientSecret)return null;
   return {authorize:providerUrl('https://accounts.google.com/o/oauth2/v2/auth'),token:providerUrl('https://oauth2.googleapis.com/token'),
    scope:'https://www.googleapis.com/auth/gmail.send email',clientId,clientSecret,
    extra:{access_type:'offline',prompt:'consent'}};
  }
  if(provider==='microsoft'){
-  const clientId=process.env.MICROSOFT_CLIENT_ID??'',clientSecret=process.env.MICROSOFT_CLIENT_SECRET??'';
+  const {clientId,clientSecret}=apps.microsoft;
   if(!clientId||!clientSecret)return null;
-  const tenant=process.env.MICROSOFT_TENANT??'common';
+  const tenant=apps.microsoft.tenant||'common';
   return {authorize:providerUrl(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/authorize`),
    token:providerUrl(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`),
    scope:'https://graph.microsoft.com/Mail.Send offline_access openid email',clientId,clientSecret,
@@ -55,11 +57,11 @@ export function oauthConfig(provider:Provider):OauthConfig|null{
  }
  return null;
 }
-export const oauthReady=(provider:Provider)=>Boolean(oauthConfig(provider));
+export const oauthReady=(provider:Provider,apps:MailApps)=>Boolean(oauthConfig(provider,apps));
 
-export async function exchangeCode(provider:Provider,code:string,redirectUri:string){
- const config=oauthConfig(provider);
- if(!config)throw Error('OAuth для этого провайдера не настроен на сервере.');
+export async function exchangeCode(provider:Provider,code:string,redirectUri:string,apps:MailApps){
+ const config=oauthConfig(provider,apps);
+ if(!config)throw Error('OAuth для этого провайдера не настроен в аккаунте.');
  const r=await fetch(config.token,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
   body:new URLSearchParams({grant_type:'authorization_code',code,redirect_uri:redirectUri,
    client_id:config.clientId,client_secret:config.clientSecret})});
@@ -69,9 +71,9 @@ export async function exchangeCode(provider:Provider,code:string,redirectUri:str
  return {refreshToken:String(data.refresh_token),accessToken:String(data.access_token??''),scope:String(data.scope??'')};
 }
 
-async function accessToken(provider:Provider,refreshToken:string){
- const config=oauthConfig(provider);
- if(!config)throw Error('OAuth для этого провайдера не настроен на сервере.');
+async function accessToken(provider:Provider,refreshToken:string,apps:MailApps){
+ const config=oauthConfig(provider,apps);
+ if(!config)throw Error('OAuth для этого провайдера не настроен в аккаунте.');
  const r=await fetch(config.token,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
   body:new URLSearchParams({grant_type:'refresh_token',refresh_token:refreshToken,
    client_id:config.clientId,client_secret:config.clientSecret})});
@@ -86,10 +88,10 @@ const rfc822=(from:string,to:string,subject:string,text:string)=>
   Buffer.from(text).toString('base64')].join('\r\n');
 
 /** Sends one real message through the connected account. Nothing else proves a mailbox works. */
-export async function sendMessage(secret:any,to:string,subject:string,text:string){
+export async function sendMessage(secret:any,to:string,subject:string,text:string,apps:MailApps){
  const from=secret.email as string;
  if(secret.kind==='oauth'){
-  const token=await accessToken(secret.provider,secret.refreshToken);
+  const token=await accessToken(secret.provider,secret.refreshToken,apps);
   if(secret.provider==='google'){
    const raw=Buffer.from(rfc822(from,to,subject,text)).toString('base64url');
    const r=await fetch(providerUrl('https://gmail.googleapis.com/gmail/v1/users/me/messages/send'),

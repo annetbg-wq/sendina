@@ -5,6 +5,8 @@ import {createServer} from 'node:http';
 import {mkdtemp} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
+import {smtpStub} from './smtpstub';
+import {signIn,platformEnv} from './session';
 import {createHash,randomBytes} from 'node:crypto';
 import {Client} from '@modelcontextprotocol/sdk/client/index.js';
 import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -48,15 +50,18 @@ test('one core serves the UI and MCP: OAuth, recipient research, bulk detection 
  const dir=await mkdtemp(join(tmpdir(),'sendina-core-'));
  const stub=stubs();
  await new Promise<void>(r=>stub.listen(3199,'127.0.0.1',r));
+ const smtp=smtpStub(3195);
+ await smtp.listen();
  const base='http://127.0.0.1:3103';
  const child=spawn(process.execPath,['--import','tsx',resolve('server/index.ts')],{stdio:'pipe',env:{...process.env,
   PORT:'3103',DATA_DIR:dir,DATABASE_URL:'',APP_TOKEN:'operator-secret',MCP_TOKEN:'',OAUTH_ISSUER:'',OAUTH_JWKS_URL:'',
-  PUBLIC_URL:base,OPENAI_API_KEY:'test-key',AI_GATEWAY_URL:'http://127.0.0.1:3199',
-  SEARCH_PROVIDER:'serper',SEARCH_API_KEY:'test-key',SEARCH_BASE_URL:'http://127.0.0.1:3199/search'}});
+  PUBLIC_URL:base,APP_URL:base,SEARCH_BASE_URL:'http://127.0.0.1:3199/search',
+  ...platformEnv(3195,'operator@example.com')}});
  let logs='';child.stderr.on('data',d=>logs+=d);child.stdout.on('data',d=>logs+=d);
+ let uiToken='';
  const req=async(path:string,body?:unknown)=>{
   const r=await fetch(base+'/api'+path,{method:body===undefined?'GET':'POST',
-   headers:{'Content-Type':'application/json',Authorization:'Bearer operator-secret'},
+   headers:{'Content-Type':'application/json',Authorization:`Bearer ${uiToken}`},
    body:body===undefined?undefined:JSON.stringify(body)});
   return {status:r.status,body:await r.json()};
  };
@@ -64,6 +69,10 @@ test('one core serves the UI and MCP: OAuth, recipient research, bulk detection 
  try{
   for(let i=0;i<100;i++){try{await fetch(base+'/api/health');break;}catch{await new Promise(r=>setTimeout(r,100));}}
   assert.equal((await fetch(base+'/api/health')).status,200,logs);
+  uiToken=await signIn(base,smtp,'operator@example.com');
+  // Model and search access belong to the account and are entered in the interface.
+  await req('/settings/connections',{openaiKey:'test-key',aiGatewayUrl:'http://127.0.0.1:3199',
+   searchProvider:'serper',searchKey:'test-key'});
 
   // The workspace reports the model and search provider it actually has.
   const caps=(await req('/capabilities')).body;
@@ -81,11 +90,13 @@ test('one core serves the UI and MCP: OAuth, recipient research, bulk detection 
   const authorize=new URLSearchParams({client_id:registration.client_id,redirect_uri:'https://chatgpt.com/connector_platform_oauth_redirect',
    response_type:'code',scope:'sendina:read sendina:write',code_challenge:challenge,code_challenge_method:'S256',state:'xyz'});
   assert.equal((await fetch(`${base}/oauth/authorize?${authorize}`)).status,200);
+  const connector=(await req('/settings/connector')).body.code;
+  assert.ok(connector,'each account has its own connector code');
   const wrong=await fetch(`${base}/oauth/authorize`,{method:'POST',redirect:'manual',
-   headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({...Object.fromEntries(authorize),operator_token:'nope'})});
-  assert.equal(wrong.status,401,'a wrong operator token must not produce a code');
+   headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({...Object.fromEntries(authorize),connector_code:'nope'})});
+  assert.equal(wrong.status,401,'a wrong connector code must not produce a code');
   const consent=await fetch(`${base}/oauth/authorize`,{method:'POST',redirect:'manual',
-   headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({...Object.fromEntries(authorize),operator_token:'operator-secret'})});
+   headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({...Object.fromEntries(authorize),connector_code:connector})});
   assert.equal(consent.status,302);
   const redirected=new URL(consent.headers.get('location')!);
   assert.equal(redirected.searchParams.get('state'),'xyz');
@@ -95,7 +106,7 @@ test('one core serves the UI and MCP: OAuth, recipient research, bulk detection 
     redirect_uri:'https://chatgpt.com/connector_platform_oauth_redirect',code_verifier:'wrong-verifier'})});
   assert.equal(bad.status,400,'PKCE must reject a wrong verifier');
   const consent2=await fetch(`${base}/oauth/authorize`,{method:'POST',redirect:'manual',
-   headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({...Object.fromEntries(authorize),operator_token:'operator-secret'})});
+   headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({...Object.fromEntries(authorize),connector_code:connector})});
   const code2=new URL(consent2.headers.get('location')!).searchParams.get('code')!;
   const token=await (await fetch(`${base}/oauth/token`,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
    body:new URLSearchParams({grant_type:'authorization_code',code:code2,client_id:registration.client_id,
@@ -182,5 +193,5 @@ test('one core serves the UI and MCP: OAuth, recipient research, bulk detection 
   assert.equal(metrics.replies,after.replies.length);
   assert.equal(metrics.sendingEnabled,false);
   assert.ok(after.audit.some((a:any)=>a.action.includes('Поиск адресатов')),'research is written to the activity log');
- }finally{await client.close().catch(()=>{});child.kill();stub.close();}
+ }finally{await client.close().catch(()=>{});child.kill();stub.close();smtp.server.close();}
 });

@@ -5,6 +5,8 @@ import {createServer} from 'node:http';
 import {mkdtemp,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
+import {smtpStub} from './smtpstub';
+import {signIn,platformEnv} from './session';
 
 /** Stands in for Google: the token endpoint and the Gmail send endpoint. */
 function provider(){
@@ -30,15 +32,18 @@ test('a mailbox becomes ready only after a connection, a test send and the domai
  const dir=await mkdtemp(join(tmpdir(),'sendina-connect-'));
  const stub=provider();
  await new Promise<void>(r=>stub.server.listen(3198,'127.0.0.1',r));
+ const smtp=smtpStub(3196);
+ await smtp.listen();
  const base='http://127.0.0.1:3105';
  const child=spawn(process.execPath,['--import','tsx',resolve('server/index.ts')],{stdio:'pipe',env:{...process.env,
   PORT:'3105',DATA_DIR:dir,DATABASE_URL:'',APP_TOKEN:'operator-secret',MCP_TOKEN:'',OAUTH_ISSUER:'',OAUTH_JWKS_URL:'',
-  PUBLIC_URL:base,GOOGLE_CLIENT_ID:'stub-client',GOOGLE_CLIENT_SECRET:'stub-secret',
-  MAIL_PROVIDER_BASE_URL:'http://127.0.0.1:3198'}});
+  PUBLIC_URL:base,APP_URL:base,MAIL_PROVIDER_BASE_URL:'http://127.0.0.1:3198',
+  ...platformEnv(3196,'operator@example.com')}});
  let logs='';child.stderr.on('data',d=>logs+=d);child.stdout.on('data',d=>logs+=d);
+ let token='';
  const req=async(path:string,body?:unknown)=>{
   const r=await fetch(base+'/api'+path,{method:body===undefined?'GET':'POST',
-   headers:{'Content-Type':'application/json',Authorization:'Bearer operator-secret'},
+   headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
    body:body===undefined?undefined:JSON.stringify(body)});
   return {status:r.status,body:await r.json()};
  };
@@ -50,6 +55,9 @@ test('a mailbox becomes ready only after a connection, a test send and the domai
  try{
   for(let i=0;i<100;i++){try{await fetch(base+'/api/health');break;}catch{await new Promise(r=>setTimeout(r,100));}}
   assert.equal((await fetch(base+'/api/health')).status,200,logs);
+  token=await signIn(base,smtp,'operator@example.com');
+  // The OAuth application now belongs to the account, filled in through the interface.
+  await req('/settings/connections',{google:{clientId:'stub-client',clientSecret:'stub-secret'}});
   const email='outreach@no-such-domain-for-sendina.example';
 
   // Detection reports a route but connects nothing.
@@ -120,5 +128,5 @@ test('a mailbox becomes ready only after a connection, a test send and the domai
   assert.equal(gone.mailbox.connection,'none');
   assert.ok(gone.mailbox.readiness.blockers.includes('NOT_CONNECTED'));
   assert.equal((await req('/mailboxes/test',{email})).status,422,'a disconnected mailbox cannot be tested');
- }finally{child.kill();stub.server.close();}
+ }finally{child.kill();stub.server.close();smtp.server.close();}
 });

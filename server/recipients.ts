@@ -1,6 +1,6 @@
 import {z} from 'zod';
-import {complete,aiReady} from './ai';
-import {search,searchReady,emailsIn,type Hit} from './search';
+import {complete,aiReady,type AiConfig} from './ai';
+import {search,searchReady,emailsIn,type Hit,type SearchConfig} from './search';
 
 export type Candidate={
  name:string;company:string;role:string;country:string;
@@ -32,19 +32,19 @@ const brief=(c:{name:string;market:string;goal:string;context:string;event:strin
  `Цель: ${c.goal}\nРынок: ${c.market}\nКампания: ${c.name}\nКонтекст продукта: ${c.context}\nЦелевое событие: ${c.event}`;
 
 /** Search mode: every recipient cites a real result, and an address survives only if it occurs in that result. */
-async function fromSearch(campaign:any,count:number,signal?:AbortSignal):Promise<FindResult>{
- const plan=await complete({name:'search_plan',schema:planSchema,signal,
+async function fromSearch(campaign:any,count:number,config:ResearchConfig,signal?:AbortSignal):Promise<FindResult>{
+ const plan=await complete({name:'search_plan',schema:planSchema,signal,config,
   system:'Ты составляешь поисковые запросы для поиска организаций и ролей. Отвечай только JSON.',
   user:`${brief(campaign)}\n\nОпиши профиль целевого клиента и составь до 5 поисковых запросов, которые найдут конкретные организации и контактные страницы.`});
  const hits:Hit[]=[];
  const notes:string[]=[];
  for(const q of plan.queries.slice(0,5)){
-  try{for(const h of await search(q,8,signal))if(h.url&&!hits.some(x=>x.url===h.url))hits.push(h);}
+  try{for(const h of await search(q,config,8,signal))if(h.url&&!hits.some(x=>x.url===h.url))hits.push(h);}
   catch(e:any){notes.push(`Запрос «${q}»: ${e.message}`);}
  }
  if(!hits.length)throw Error('Поиск не вернул результатов. Проверьте ключ поискового API.');
  const corpus=hits.map((h,i)=>`[${i+1}] ${h.title}\n${h.url}\n${h.snippet}`).join('\n\n');
- const found=await complete({name:'candidates',schema:extractSchema,signal,system:rules,
+ const found=await complete({name:'candidates',schema:extractSchema,signal,config,system:rules,
   user:`${brief(campaign)}\n\nНиже результаты веб-поиска. Отбери до ${count} адресатов, подходящих цели.\n\n${corpus}`});
  const urls=new Set(hits.map(h=>h.url));
  const text=(url:string)=>hits.filter(h=>h.url===url).map(h=>`${h.title} ${h.url} ${h.snippet}`).join(' ');
@@ -65,8 +65,8 @@ async function fromSearch(campaign:any,count:number,signal?:AbortSignal):Promise
 }
 
 /** Proposal mode: no search key, so nothing may claim an address or a source. */
-async function fromProposal(campaign:any,count:number,signal?:AbortSignal):Promise<FindResult>{
- const found=await complete({name:'proposed_candidates',schema:extractSchema,signal,
+async function fromProposal(campaign:any,count:number,config:ResearchConfig,signal?:AbortSignal):Promise<FindResult>{
+ const found=await complete({name:'proposed_candidates',schema:extractSchema,signal,config,
   system:`${rules}\nПоиск недоступен. Поля sourceUrl и email всегда null.`,
   user:`${brief(campaign)}\n\nПредложи до ${count} организаций и ролей, которым имеет смысл написать. Для каждой — доказуемое обоснование соответствия цели.`});
  return {mode:'proposal',profile:'',queries:[],notes:['Поисковый API не подключён: кандидаты не подтверждены и не могут попасть в отправку до проверки.'],
@@ -74,13 +74,14 @@ async function fromProposal(campaign:any,count:number,signal?:AbortSignal):Promi
    evidence:c.evidence,basis:c.basis,reason:c.reason,confidence:c.confidence,verification:'unverified' as const,origin:'proposal' as const}))};
 }
 
-export const resolveMode=(setting:string):'search'|'proposal'=>
- setting==='search'?'search':setting==='proposal'?'proposal':searchReady()?'search':'proposal';
+export type ResearchConfig=AiConfig&SearchConfig;
+export const resolveMode=(setting:string,searchAvailable:boolean):'search'|'proposal'=>
+ setting==='search'?'search':setting==='proposal'?'proposal':searchAvailable?'search':'proposal';
 
-export async function findRecipients(campaign:any,setting:string,count:number,signal?:AbortSignal):Promise<FindResult>{
- if(!aiReady())throw Error('Модель не подключена. Задайте OPENAI_API_KEY в переменных сервера.');
- const mode=resolveMode(setting);
- if(mode==='search'&&!searchReady())throw Error('Режим поиска выбран, но SEARCH_API_KEY не задан.');
- const result=mode==='search'?await fromSearch(campaign,count,signal):await fromProposal(campaign,count,signal);
+export async function findRecipients(campaign:any,setting:string,count:number,config:ResearchConfig,signal?:AbortSignal):Promise<FindResult>{
+ if(!aiReady(config))throw Error('Модель не подключена. Укажите ключ OpenAI в настройках аккаунта.');
+ const mode=resolveMode(setting,searchReady(config));
+ if(mode==='search'&&!searchReady(config))throw Error('Выбран поиск в интернете, но поисковый API не настроен в аккаунте.');
+ const result=mode==='search'?await fromSearch(campaign,count,config,signal):await fromProposal(campaign,count,config,signal);
  return {...result,candidates:result.candidates.slice(0,count)};
 }

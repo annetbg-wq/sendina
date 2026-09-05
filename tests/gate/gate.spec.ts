@@ -1,23 +1,36 @@
 import {test,expect} from '@playwright/test';
-test('a protected workspace asks for a token in both languages and signs in',async({page})=>{
- const denied:number[]=[];
- page.on('response',r=>{if(r.url().includes('/api/state')&&r.status()===401)denied.push(1);});
+
+test('the sign-in screen asks for an address in both languages',async({page})=>{
  await page.goto('/');
- await expect(page.getByRole('heading',{name:'Вход в рабочую область'})).toBeVisible({timeout:15000});
- expect(denied.length,'a rejected token must not be retried').toBe(1);
+ await expect(page.getByRole('heading',{name:'Вход в Sendina'})).toBeVisible({timeout:15000});
  await page.getByRole('button',{name:'Язык интерфейса'}).click();
- await expect(page.getByRole('heading',{name:'Sign in to your workspace'})).toBeVisible();
+ await expect(page.getByRole('heading',{name:'Sign in to Sendina'})).toBeVisible();
  expect((await page.locator('body').innerText()).match(/[А-Яа-яЁё]+/g),'Untranslated text on the sign-in screen').toBeNull();
- await page.getByLabel('Access token').fill('wrong-token');
- await page.getByRole('button',{name:'Sign in'}).click();
- await expect(page.getByRole('alert')).toContainText('Access token required');
- await page.getByLabel('Access token').fill('test-token-123');
- await page.getByRole('button',{name:'Sign in'}).click();
- await expect(page.locator('h1')).toHaveText('What would you like to achieve today?',{timeout:15000});
+ await expect(page.getByLabel('Work address')).toBeVisible();
 });
-test('the demo stays reachable without a token',async({page})=>{
+
+test('an unlisted address is queued for approval rather than signed in',async({page})=>{
  await page.goto('/');
- await expect(page.getByRole('heading',{name:'Вход в рабочую область'})).toBeVisible({timeout:15000});
+ await page.getByLabel('Рабочий адрес').fill('newcomer@example.com');
+ await page.getByRole('button',{name:'Прислать ссылку для входа'}).click();
+ await expect(page.getByRole('heading',{name:'Заявка принята'})).toBeVisible({timeout:15000});
+ // Nothing about the workspace is reachable while approval is pending.
+ await expect(page.locator('nav')).toHaveCount(0);
+});
+
+test('a superadmin address is accepted and the link never reaches the browser',async({page})=>{
+ const responses:string[]=[];
+ page.on('response',async r=>{if(r.url().includes('/auth/request'))responses.push(await r.text().catch(()=>''));});
+ await page.goto('/');
+ await page.getByLabel('Рабочий адрес').fill('boss@example.com');
+ await page.getByRole('button',{name:'Прислать ссылку для входа'}).click();
+ await expect(page.getByRole('heading',{name:'Ссылка в журнале сервера'})).toBeVisible({timeout:15000});
+ expect(responses.join(' ')).not.toContain('auth/callback');
+});
+
+test('the demo stays reachable without an account',async({page})=>{
+ await page.goto('/');
+ await expect(page.getByRole('heading',{name:'Вход в Sendina'})).toBeVisible({timeout:15000});
  await page.getByRole('button',{name:'Посмотреть демонстрацию'}).click();
  await expect(page.locator('h1')).toHaveText('Что вы хотите получить сегодня?',{timeout:15000});
 });

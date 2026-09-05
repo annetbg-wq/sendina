@@ -422,6 +422,67 @@ OAuth для этого провайдера не настроен на серв
 есть|yes
 нет|no
 Для подключения ящика подключите сервер в настройках.|Connect a server in Settings to connect a mailbox.
+Вход в Sendina|Sign in to Sendina
+Проверьте почту|Check your mail
+Отправить ещё раз|Send again
+Заявка принята|Request received
+Администратор получит уведомление. После подтверждения придёт письмо со ссылкой для входа.|An administrator will be notified. Once approved, a login link arrives by email.
+Доступ закрыт|Access closed
+Ссылка в журнале сервера|The link is in the server log
+Так можно войти первому суперадмину до настройки системной почты.|This lets the first superadmin sign in before platform mail is configured.
+Не удалось подключиться к серверу.|Could not reach the server.
+Введите рабочий адрес. Мы пришлём ссылку для входа — пароль не нужен. Новым аккаунтам доступ открывает администратор.|Enter your work address. We will email a login link — no password needed. New accounts are opened by an administrator.
+Ссылка для входа устарела. Запросите новую.|The login link has expired. Request a new one.
+Рабочий адрес|Work address
+Прислать ссылку для входа|Email me a login link
+Выйти|Sign out
+Суперадмин|Superadmin
+Рабочая область аккаунта|Account workspace
+Аккаунты|Accounts
+Кто может входить в Sendina|Who may sign in to Sendina
+Новый адрес получает доступ только после подтверждения. Рабочие области аккаунтов разделены: кампании и адресаты других аккаунтов отсюда не видны.|A new address gets access only after approval. Account workspaces are separate: campaigns and recipients of other accounts are not visible here.
+Обновить|Refresh
+Нажмите «Обновить», чтобы загрузить список аккаунтов.|Press Refresh to load the account list.
+Роль|Role
+Вход|Sign-in
+Подтверждён|Approved
+Заблокирован|Blocked
+Ожидает подтверждения|Awaiting approval
+ни разу|never
+Подтвердить|Approve
+Заблокировать|Block
+Доступ подтверждён|Access approved
+Подключения аккаунта|Account connections
+Ключи модели, поиска и почтовых провайдеров хранятся в вашем аккаунте. Заполните их по шагам — сервер их не возвращает обратно.|Model, search and mail provider keys live in your account. Fill them in step by step — the server never hands them back.
+Заполнить по шагам|Fill in step by step
+Модель|Model
+Ключ OpenAI используется для подбора адресатов и подготовки писем. Без него эти действия откажутся работать, а не начнут выдумывать.|The OpenAI key powers recipient research and message preparation. Without it those actions refuse to run rather than start inventing.
+Ключ OpenAI|OpenAI key
+Адрес шлюза (необязательно)|Gateway URL (optional)
+С поисковым ключом кандидаты ссылаются на настоящий результат. Без него они остаются неподтверждёнными и не проходят правила.|With a search key candidates cite a real result. Without one they stay unverified and never pass the rules.
+Провайдер|Provider
+Ключ поискового API|Search API key
+Создайте OAuth-приложение в Google Cloud Console со scope gmail.send и укажите адрес возврата ниже.|Create an OAuth application in Google Cloud Console with the gmail.send scope, then register the redirect address below.
+Создайте приложение в Entra ID со scope Mail.Send и offline_access, затем укажите адрес возврата ниже.|Create an application in Entra ID with the Mail.Send and offline_access scopes, then register the redirect address below.
+Идентификатор тенанта|Tenant id
+Адрес возврата (укажите его у провайдера)|Redirect address (register it with the provider)
+Уже заполнено. Пустое поле оставит сохранённое значение без изменений.|Already filled in. An empty field keeps the stored value.
+Поля пока не заполнены.|These fields are not filled in yet.
+Назад|Back
+Сохранить и далее|Save and continue
+Сохранить и закрыть|Save and close
+Пропустить шаг|Skip this step
+Настройки сохранены|Settings saved
+Для этого действия подключите сервер в настройках.|Connect a server in Settings for this action.
+Это демонстрация в браузере: вход не требуется. Подключите сервер, чтобы работать под своим аккаунтом.|This is a browser demo: no sign-in needed. Connect a server to work under your own account.
+Автоматизация работы небольшого отеля|Running a small hotel with less manual work
+Совместное внедрение решений|Delivering the solution together
+Получение документов|Obtaining documents
+Добавьте коннектор с этим адресом в ChatGPT. На экране согласия введите код коннектора — он привязывает чат ровно к вашему аккаунту.|Add a connector with this address in ChatGPT. On the consent screen enter the connector code, which binds the chat to your account alone.
+Код коннектора|Connector code
+Показать код|Show the code
+Создать новый|Create a new one
+Код коннектора заменён|The connector code was replaced
 `;
 export const dictionary:Record<string,string>=Object.fromEntries(pairs.trim().split('\n').map(line=>line.split('|')));
 const ordered=Object.keys(dictionary).filter(k=>/[А-Яа-яЁё]/.test(k)).sort((a,b)=>b.length-a.length);

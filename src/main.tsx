@@ -4,7 +4,7 @@ import {ChartNoAxesCombined,House,Send,Lightbulb,Globe,Mail,MessageCircle,ChartN
 import type {State} from '../server/seed';
 import './styles.css';
 import {localize, translate, type Locale} from './i18n';
-import {api,backendUrl,browserDemo} from './api';
+import {api,backendUrl,browserDemo,captureSession,session,setSession} from './api';
 import {Flag,markets} from './flag';
 import {mailboxReadiness,domainReadiness} from '../server/readiness';
 const navigation=[['Главная',House],['Рассылки',Send],['Возможности',Lightbulb],['Рынки',Globe],['Домены и почты',Mail],['Ответы',MessageCircle],['Аналитика',ChartNoAxesColumnIncreasing],['Настройки',Settings]] as const;
@@ -18,28 +18,49 @@ function App(){
  const [locale,setLocale]=useState<Locale>(()=>localStorage.getItem('sendina-locale')==='en'?'en':'ru');
  const [integration,setIntegration]=useState<any>(null);
  const [serverDraft,setServerDraft]=useState(backendUrl());
- const [token,setToken]=useState(()=>sessionStorage.getItem('token')??'');
+ const [account,setAccount]=useState<any>(null);
+ const [loginState,setLoginState]=useState<{status:string;message:string}|null>(null);
+ const [arrival]=useState(()=>captureSession());
  const [research,setResearch]=useState<any>(null);
  const [caps,setCaps]=useState<any>(null);
  const [detection,setDetection]=useState<any>(null);
+ const [connector,setConnector]=useState('');
  useEffect(()=>{localStorage.setItem('sendina-locale',locale);document.documentElement.lang=locale;document.title=locale==='ru'?'Sendina — Монетизатор':'Sendina — Monetizer';},[locale]);
  const [state,setState]=useState<State|null>(null),[page,setPage]=useState('Главная'),[query,setQuery]=useState(''),[modal,setModal]=useState(''),[notice,setNotice]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[selected,setSelected]=useState(''),[preview,setPreview]=useState<any[]>([]),[replyFilter,setReplyFilter]=useState('all'),[menu,setMenu]=useState(false);
- const reload=async()=>{setState(await api('/state'));api('/capabilities').then(setCaps).catch(()=>setCaps(null));};
- useEffect(()=>{let active=true;const load=async()=>{for(let attempt=0;attempt<4;attempt++){try{await reload();return;}catch(e:any){if(attempt===3||e.status===401){if(active)setError(e.message);return;}await new Promise(r=>setTimeout(r,750));}}};void load();return()=>{active=false;};},[]);
+ const reload=async()=>{setState(await api('/state'));api('/capabilities').then(c=>{setCaps(c);setAccount(c.account??null);}).catch(()=>setCaps(null));};
+ useEffect(()=>{let active=true;const load=async()=>{for(let attempt=0;attempt<4;attempt++){try{await reload();return;}catch(e:any){if(e.status===401)return;if(attempt===3){if(active)setError(e.message);return;}await new Promise(r=>setTimeout(r,750));}}};void load();return()=>{active=false;};},[]);
  useEffect(()=>{if(!notice)return;const t=setTimeout(()=>setNotice(''),5000);return()=>clearTimeout(t);},[notice]);
  useEffect(()=>{const handler=(e:KeyboardEvent)=>{if(e.key==='Escape')setModal('');};window.addEventListener('keydown',handler);return()=>window.removeEventListener('keydown',handler);},[]);
  const run=async(fn:()=>Promise<unknown>,message?:string)=>{setBusy(true);setError('');try{await fn();await reload();if(message)setNotice(message);}catch(e:any){setError(e.message);}finally{setBusy(false);}};
  const go=(p:string)=>{setPage(p);setQuery('');setMenu(false);};
+ const menuItems=account?.role==='superadmin'?[...navigation,['Аккаунты',Users] as const]:navigation;
+ const [accounts,setAccounts]=useState<any[]>([]);
+ const [step,setStep]=useState(0);
  const create=(idea?:State['opportunities'][number])=>{setSelected(idea?.id??'');setModal('create');};
  const match=(s:string)=>s.toLowerCase().includes(query.toLowerCase());
  if(!state)return localize(<div className="gate"><div className="gate-card">
  <div className="gate-brand"><ChartNoAxesCombined size={29}/><span>Монетизатор<span className="brand-sub">by sendina</span></span></div>
- {error?<><h2>Вход в рабочую область</h2><p>Рабочая область защищена токеном доступа. Введите токен, который задан на сервере.</p>
-  <div className="alert error" role="alert">{error}</div>
-  <form onSubmit={e=>{e.preventDefault();setError('');setState(null);reload().catch(err=>setError(err.message));}}>
-   <label>Токен доступа<input type="password" autoFocus value={token} onChange={e=>{setToken(e.target.value);sessionStorage.setItem('token',e.target.value);}}/></label>
-   <button className="wide" disabled={!token}>Войти</button></form></>
- :<><h2>Загружаем рабочую область…</h2><div className="gate-bar"><i/></div></>}
+ {loginState?.status==='logged'?<><h2>Ссылка в журнале сервера</h2><p data-user-content>{loginState.message}</p><p className="tiny muted">Так можно войти первому суперадмину до настройки системной почты.</p></>
+ :loginState?.status==='sent'?<><h2>Проверьте почту</h2><p data-user-content>{loginState.message}</p>
+   <button className="wide secondary" onClick={()=>setLoginState(null)}>Отправить ещё раз</button></>
+ :loginState?.status==='pending'?<><h2>Заявка принята</h2><p data-user-content>{loginState.message}</p>
+   <p className="tiny muted">Администратор получит уведомление. После подтверждения придёт письмо со ссылкой для входа.</p></>
+ :loginState?.status==='blocked'?<><h2>Доступ закрыт</h2><p data-user-content>{loginState.message}</p></>
+ :error&&!loginState?<><h2>Вход в Sendina</h2><p>Не удалось подключиться к серверу.</p>
+   <div className="alert error" role="alert">{error}</div>
+   <button className="wide secondary" onClick={()=>{setError('');void reload().catch(e=>setError(e.message));}}>Повторить</button></>
+ :<><h2>Вход в Sendina</h2>
+   <p>Введите рабочий адрес. Мы пришлём ссылку для входа — пароль не нужен. Новым аккаунтам доступ открывает администратор.</p>
+   {arrival==='expired'&&<div className="alert error" role="alert">Ссылка для входа устарела. Запросите новую.</div>}
+   {error&&<div className="alert error" role="alert">{error}</div>}
+   <form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);
+     setBusy(true);setError('');
+     api('/auth/request',{email:f.get('email')})
+      .then(r=>setLoginState(r))
+      .catch(err=>setError(err.message))
+      .finally(()=>setBusy(false));}}>
+    <label>Рабочий адрес<input name="email" type="email" required autoFocus placeholder="name@company.com"/></label>
+    <button className="wide" disabled={busy}>Прислать ссылку для входа</button></form></>}
  <div className="gate-foot">
   <button className="text-link" onClick={()=>{localStorage.setItem('sendina-api-url','');location.reload();}}>Посмотреть демонстрацию<ArrowRight size={12}/></button>
   <button className="text-link" aria-label="Язык интерфейса" onClick={()=>setLocale(locale==='ru'?'en':'ru')}><Globe size={13}/>{locale.toUpperCase()}</button></div>
@@ -51,7 +72,10 @@ function App(){
  const campaignTable=(compact=false)=><div className="table-scroll"><table><thead><tr><th>Цель</th><th>Рынок</th><th>Состояние</th><th>Результат</th>{!compact&&<th/>}</tr></thead><tbody>{campaigns.map(c=><tr key={c.id}><td><button className="row-link" onClick={()=>{setSelected(c.id);setModal('campaign');}} data-user-content={!c.id.match(/^c[123]$/)}>{c.name}</button>{!compact&&<small>{c.event}</small>}</td><td><Flag market={c.market}/>{c.market}</td><td><span className={'badge '+c.status}>{c.status==='active'?'Активна':c.status==='paused'?'На паузе':'Черновик'}</span></td><td>{c.positive} ответов <span className="muted">· {c.sent?(c.positive/c.sent*100).toFixed(1):'0'}%</span></td>{!compact&&<td><button className="icon-button" disabled={busy} aria-label={c.status==='active'?'Приостановить':'Активировать'} onClick={()=>run(()=>api(`/campaigns/${c.id}/status`,{status:c.status==='active'?'paused':'active'}),'Статус кампании обновлён')}>{c.status==='active'?<Pause size={16}/>:<Play size={16}/>}</button></td>}</tr>)}</tbody></table>{!campaigns.length&&<div className="empty">Кампании не найдены. Создайте первую рассылку.</div>}</div>;
  const opportunityTable=()=> <div className="table-scroll"><table><thead><tr><th>Место</th><th>Идея / возможность</th><th>Рынок</th><th>Оценка</th><th>Тренд</th></tr></thead><tbody>{ideas.slice(0,4).map((o,i)=><tr key={o.id}><td>{i+1}</td><td><button className="row-link" onClick={()=>{setSelected(o.id);setModal('idea');}}>{o.name}</button></td><td><Flag market={o.market}/><span className="country">{o.market}</span></td><td><b className={i===0?'green-text':''}>{o.score}<span className="muted"> /100</span></b></td><td><span className={o.trend>0?'trend up':o.trend<0?'trend down':'trend'}>{o.trend>0?<ArrowUpRight size={13}/>:o.trend<0?<ArrowDownRight size={13}/>:<ArrowRight size={13}/>} {o.trend>0?'Растёт':o.trend<0?'Падает':'Стабильно'}</span></td></tr>)}</tbody></table></div>;
  const domainTable=()=> <div className="table-scroll"><table><thead><tr><th>Домен / почтовые ящики</th><th>Проверка</th><th>Объём примера</th></tr></thead><tbody>{state.domains.filter(d=>match(d.name)).map(d=><tr key={d.id}><td><b data-user-content>{d.name}</b>{d.mailboxes.map(m=><small key={m.email} data-user-content>{m.email}</small>)}</td><td>{(()=>{const r=domainReadiness(d,state.stopped);return <span className={'badge '+(r.ready?'active':'draft')}>{r.ready?'Готов':blockers[r.blockers[0]]??'Не готов'}</span>;})()}</td><td><div className="volume">{d.used} / {d.limit}<div className="bar"><i style={{width:`${d.limit?Math.min(100,d.used/d.limit*100):0}%`}}/></div></div></td></tr>)}</tbody></table></div>;
- return localize(<div className="app"><aside className={menu?'sidebar open':'sidebar'}><a className="brand" href="#" onClick={e=>{e.preventDefault();go('Главная');}}><ChartNoAxesCombined size={29}/><span>Монетизатор<span className="brand-sub">by sendina</span></span></a><nav>{navigation.map(([label,Icon])=><button key={label} aria-label={label} aria-current={page===label?'page':undefined} className={page===label?'nav-item selected':'nav-item'} onClick={()=>go(label)}><Icon size={20}/>{label}{label==='Ответы'&&<span className="nav-count">{state.replies.length}</span>}</button>)}</nav><div className="safety"><Shield size={20}/><strong>Безопасная отправка</strong><p>Контролируйте объём отправок и репутацию ваших доменов на каждом этапе.</p>{link('Подробнее','Домены и почты')}<div className="safety-foot"><span className="dot"/> Защита включена</div></div><div className="workspace"><div className="avatar small">A</div><div><b>Моя рабочая область</b><small>Демонстрационный режим</small></div></div></aside>
+ return localize(<div className="app"><aside className={menu?'sidebar open':'sidebar'}><a className="brand" href="#" onClick={e=>{e.preventDefault();go('Главная');}}><ChartNoAxesCombined size={29}/><span>Монетизатор<span className="brand-sub">by sendina</span></span></a><nav>{menuItems.map(([label,Icon])=><button key={label} aria-label={label} aria-current={page===label?'page':undefined} className={page===label?'nav-item selected':'nav-item'} onClick={()=>go(label)}><Icon size={20}/>{label}{label==='Ответы'&&<span className="nav-count">{state.replies.length}</span>}</button>)}</nav><div className="safety"><Shield size={20}/><strong>Безопасная отправка</strong><p>Контролируйте объём отправок и репутацию ваших доменов на каждом этапе.</p>{link('Подробнее','Домены и почты')}<div className="safety-foot"><span className="dot"/> Защита включена</div></div><div className="workspace"><div className="avatar small" aria-hidden="true">{(account?.email??'A')[0].toUpperCase()}</div>
+ <div>{account?.email?<b data-user-content>{account.email}</b>:<b>Моя рабочая область</b>}
+  <small>{account?.role==='superadmin'?'Суперадмин':browserDemo()?'Демонстрационный режим':'Рабочая область аккаунта'}</small></div>
+ {account&&<button className="icon-button" aria-label="Выйти" onClick={()=>{void api('/auth/logout').catch(()=>{});setSession('');location.reload();}}><Power size={15}/></button>}</div></aside>
  <div className="main-shell"><header className="topbar"><button className="mobile-menu icon-button" aria-label="Открыть меню" onClick={()=>setMenu(!menu)}><Menu/></button><label className="search"><Search size={17}/><input aria-label="Поиск" placeholder="Поиск по рабочей области" value={query} onChange={e=>setQuery(e.target.value)}/><kbd>⌕</kbd></label><div className="top-actions"><button className="locale-switch" aria-label="Язык интерфейса" onClick={()=>setLocale(locale==='ru'?'en':'ru')}><Globe size={14}/>{locale.toUpperCase()}</button><span className={'system '+(state.stopped?'halted':'')}><span className="status-icon">{state.stopped?<Pause size={11}/>:<Check size={11}/>}</span>{state.stopped?'Отправки остановлены':'Демо · отправка отключена'}</span><button className="icon-button notification" aria-label="Журнал уведомлений" onClick={()=>setModal('audit')}><Bell size={20}/><i/></button><button className="profile" onClick={()=>go('Настройки')}><span className="avatar">A</span><ChevronDown size={14}/></button></div></header>
  <main><div className="breadcrumb">Рабочая область <ChevronRight size={12}/> <span>{page}</span></div><div className="page-title"><div><h1>{page==='Главная'?'Что вы хотите получить сегодня?':page}</h1><p>{page==='Главная'?'От первой идеи до измеримого результата — в одной системе.':({Рассылки:'Ваши цели, эксперименты и результаты в одном месте.',Возможности:'Экономические гипотезы для первых небольших тестов.',Рынки:'Сравнивайте страны и выбирайте рынок для следующего запуска.','Домены и почты':'Репутация отправителя — основа устойчивого результата.',Ответы:'Все диалоги и следующие действия вашей команды.',Аналитика:'Оптимизируйте результат, а не количество отправок.',Настройки:'Управление рабочей областью, исключениями и автоматизацией.'} as Record<string,string>)[page]}</p></div>{page==='Главная'?<span className="date">{new Date().toLocaleDateString(locale==='ru'?'ru-RU':'en-US',{day:'numeric',month:'long',year:'numeric'})} <ChevronDown size={13}/></span>:page==='Рассылки'?<button onClick={()=>create()}><Plus size={16}/>Создать рассылку</button>:null}</div>
  {browserDemo()&&<div className="demo-banner"><Info size={14}/>Демо в браузере · данные хранятся на этом устройстве<button className="text-link" onClick={()=>go('Настройки')}>Подключить сервер<ArrowRight size={12}/></button></div>}{error&&<div className="alert error" role="alert">{error}<button className="icon-button" onClick={()=>setError('')} aria-label="Закрыть ошибку"><X size={16}/></button></div>}
@@ -87,23 +111,91 @@ function App(){
    <span className="tiny muted">{d.dns?.checkedAt?`SPF ${d.dns.spf?'есть':'нет'} · DKIM ${d.dns.dkim?'есть':'нет'} · DMARC ${d.dns.dmarc?'есть':'нет'}`:'DNS не проверялся'}</span>
   </div></section>;})}</div></>}
 
+ {page==='Аккаунты'&&<><div className="info-banner"><ShieldCheck size={24}/><div><b>Кто может входить в Sendina</b>
+   <p>Новый адрес получает доступ только после подтверждения. Рабочие области аккаунтов разделены: кампании и адресаты других аккаунтов отсюда не видны.</p></div>
+   <button className="secondary" disabled={busy} onClick={()=>run(async()=>setAccounts(await api('/accounts')))}><RefreshCw size={14}/>Обновить</button></div>
+  {!accounts.length?<div className="empty">Нажмите «Обновить», чтобы загрузить список аккаунтов.</div>
+   :<section className="card full-card">{header(Users,'Аккаунты',<span className="subtle-tag">{accounts.length}</span>)}
+    <div className="table-scroll"><table><thead><tr><th>Адрес</th><th>Роль</th><th>Состояние</th><th>Вход</th><th/></tr></thead>
+     <tbody>{accounts.map(a=><tr key={a.id}>
+      <td><b data-user-content>{a.email}</b></td>
+      <td>{a.role==='superadmin'?'Суперадмин':'Пользователь'}</td>
+      <td><span className={'badge '+(a.status==='approved'?'active':a.status==='blocked'?'paused':'draft')}>
+       {a.status==='approved'?'Подтверждён':a.status==='blocked'?'Заблокирован':'Ожидает подтверждения'}</span></td>
+      <td className="tiny muted">{a.lastLoginAt?new Date(a.lastLoginAt).toLocaleDateString(locale==='ru'?'ru-RU':'en-US'):'ни разу'}</td>
+      <td><div className="row-actions">
+       {a.status!=='approved'&&<button className="secondary small-button" disabled={busy}
+        onClick={()=>run(async()=>{await api('/accounts/decide',{id:a.id,status:'approved'});setAccounts(await api('/accounts'));},'Доступ подтверждён')}>Подтвердить</button>}
+       {a.status!=='blocked'&&a.role!=='superadmin'&&<button className="text-link" disabled={busy}
+        onClick={()=>run(async()=>{await api('/accounts/decide',{id:a.id,status:'blocked'});setAccounts(await api('/accounts'));},'Доступ закрыт')}>Заблокировать</button>}
+      </div></td></tr>)}</tbody></table></div></section>}</>}
+
  {page==='Ответы'&&<><div className="tabs">{[['all','Все ответы'],['positive','Положительные'],['neutral','Уточнения'],['negative','Отказы']].map(([key,label])=><button className={replyFilter===key?'tab active-tab':'tab'} key={key} onClick={()=>setReplyFilter(key)}>{label}</button>)}</div><div className="reply-list">{state.replies.filter(r=>(replyFilter==='all'||r.category===replyFilter)&&match(r.name+r.text+r.email)).map(r=><article className="card reply" key={r.id}><div className="reply-avatar" aria-hidden="true">{translate(r.name,locale)[0]}</div><div className="reply-content"><div className="reply-heading"><h3>{r.name} <span>{r.company}</span></h3><span className={'badge '+(r.category==='positive'?'active':'draft')}>{categories[r.category]}</span></div><small>{r.email} · {state.campaigns.find(c=>c.id===r.campaignId)?.name}</small><p data-user-content={!r.id.match(/^r[12]$/)}>{r.text}</p><div className="reply-actions"><span><CalendarDays size={14}/> {r.category==='positive'?'Следующий шаг: согласовать встречу':'Следующий шаг: изучить запрос'}</span><button className="text-link" onClick={()=>run(()=>api('/suppress',{email:r.email}),'Адресат исключён из всех кампаний')}>Исключить адресата</button></div></div></article>)}{!state.replies.filter(r=>(replyFilter==='all'||r.category===replyFilter)&&match(r.name+r.text+r.email)).length&&<div className="empty card">Ответов в этой категории пока нет.</div>}</div></>}
  {page==='Аналитика'&&<><div className="stats analytics-stats">{[['Отправлено',total],['Положительные ответы',positive],['Конверсия',`${total?(positive/total*100).toFixed(1):0}%`],['Ценность / 1 000 отправок',total?`${Math.round(value/total*1000)} $`:'—']].map(([label,n])=><article className="card metric" key={label}><span>{label}</span><h2>{n}</h2><small>Демонстрационные данные</small></article>)}</div><section className="card full-card">{header(ChartNoAxesColumnIncreasing,'Результаты по кампаниям')}{campaignTable()}<div className="card-note">Основная метрика ТЗ считается по безопасно доставленным письмам. Подтверждённых доставок пока нет; выше показан пример расчёта по отправкам.</div></section><section className="card full-card">{header(ChartNoAxesCombined,'Положительные ответы')}<div className="chart">{state.campaigns.map(c=><div key={c.id}><span>{c.name}</span><div className="chart-track"><i style={{width:Math.max(1,c.positive/Math.max(1,...state.campaigns.map(c=>c.positive))*100)+'%'}}/></div><b>{c.positive}</b></div>)}</div></section></>}
- {page==='Настройки'&&<div className="settings-grid"><section className="card setting">{header(Globe,'Сервер приложения')}<p>{browserDemo()?'Данные сохраняются только в этом браузере. Для общей рабочей области подключите сервер.':'Подключение к серверной рабочей области.'}</p><form onSubmit={e=>{e.preventDefault();run(async()=>{const url=serverDraft.trim().replace(/\/$/,'');if(url&&new URL(url).protocol!=='https:')throw Error('Укажите HTTPS-адрес сервера.');localStorage.setItem('sendina-api-url',url);await reload();},'Адрес сервера сохранён');}}><input aria-label="HTTPS-адрес сервера" type="url" placeholder="https://api.example.com" value={serverDraft} onChange={e=>setServerDraft(e.target.value)}/><button disabled={busy}>Сохранить</button></form><label className="backend-token">Токен доступа<input type="password" aria-label="Токен доступа" defaultValue={sessionStorage.getItem('token')??''} onChange={e=>sessionStorage.setItem('token',e.target.value)}/></label></section><section className="card setting">{header(Globe,'Язык интерфейса')}<p>Текст и данные пользователя сохраняются на исходном языке.</p><select aria-label="Язык интерфейса" value={locale} onChange={e=>setLocale(e.target.value as Locale)}><option value="ru">Русский</option><option value="en">Английский</option></select></section><section className="card setting">{header(Search,'Поиск адресатов')}
-  <p>{caps?.search?.ready?'Подключён поиск в интернете: у кандидатов будет настоящая ссылка на источник.':'Поисковый API не подключён. Модель может предлагать кандидатов, но они остаются неподтверждёнными.'}</p>
-  <select aria-label="Режим поиска адресатов" value={state.settings?.recipientMode??'auto'} disabled={busy}
-   onChange={e=>run(()=>api('/settings/recipients',{mode:e.target.value}),'Режим сохранён')}>
-   <option value="auto">Автоматически</option><option value="search">Поиск в интернете</option><option value="proposal">Предложения модели</option></select>
-  <p className="tiny muted">Модель: {caps?.ai?.ready?caps.ai.model:'не подключена'} · Поиск: {caps?.search?.ready?caps.search.provider:'не подключён'}</p>
+ {page==='Настройки'&&<div className="settings-grid"><section className="card setting">{header(Globe,'Сервер приложения')}<p>{browserDemo()?'Данные сохраняются только в этом браузере. Для общей рабочей области подключите сервер.':'Подключение к серверной рабочей области.'}</p><form onSubmit={e=>{e.preventDefault();run(async()=>{const url=serverDraft.trim().replace(/\/$/,'');if(url&&new URL(url).protocol!=='https:')throw Error('Укажите HTTPS-адрес сервера.');localStorage.setItem('sendina-api-url',url);await reload();},'Адрес сервера сохранён');}}><input aria-label="HTTPS-адрес сервера" type="url" placeholder="https://api.example.com" value={serverDraft} onChange={e=>setServerDraft(e.target.value)}/><button disabled={busy}>Сохранить</button></form><label className="backend-token">Токен доступа<input type="password" aria-label="Токен доступа" defaultValue={sessionStorage.getItem('token')??''} onChange={e=>sessionStorage.setItem('token',e.target.value)}/></label></section><section className="card setting">{header(Globe,'Язык интерфейса')}<p>Текст и данные пользователя сохраняются на исходном языке.</p><select aria-label="Язык интерфейса" value={locale} onChange={e=>setLocale(e.target.value as Locale)}><option value="ru">Русский</option><option value="en">Английский</option></select></section><section className="card setting">{header(Search,'Подключения аккаунта')}
+  <p>Ключи модели, поиска и почтовых провайдеров хранятся в вашем аккаунте. Заполните их по шагам — сервер их не возвращает обратно.</p>
+  <div className="connection-status">
+   {[['Модель',caps?.connections?.openai?.configured],['Поиск адресатов',caps?.connections?.search?.configured],
+     ['Google Workspace',caps?.connections?.google?.configured],['Microsoft 365',caps?.connections?.microsoft?.configured]].map(([label,ok])=>
+    <span key={String(label)} className={'badge '+(ok?'active':'draft')}>{label as string}</span>)}</div>
+  <div className="button-stack">
+   <button onClick={()=>{setStep(0);setModal('connections');}}>Заполнить по шагам<ArrowRight size={15}/></button>
+   <select aria-label="Режим поиска адресатов" value={state.settings?.recipientMode??'auto'} disabled={busy}
+    onChange={e=>run(()=>api('/settings/recipients',{mode:e.target.value}),'Режим сохранён')}>
+    <option value="auto">Автоматически</option><option value="search">Поиск в интернете</option><option value="proposal">Предложения модели</option></select></div>
   {caps&&!caps.storage?.postgres&&<p className="tiny muted">Хранилище: файл контейнера. Подключите PostgreSQL, иначе данные пропадут при передеплое.</p>}
  </section>
  <section className="card setting">{header(MessageCircle,'Коннектор ChatGPT')}<p>Управляйте Sendina из чата: создавайте кампании, готовьте письма и смотрите результаты через MCP.</p><button className="secondary" onClick={()=>run(async()=>{setIntegration(await api('/integrations'));setModal('mcp');})}>Параметры подключения<ArrowRight size={15}/></button></section><section className="card setting">{header(Power,'Управление отправками')}<p>Аварийная остановка приостанавливает все активные кампании. После снятия остановки возобновляйте их по отдельности.</p><button className={state.stopped?'secondary':'danger'} disabled={busy} onClick={()=>run(()=>api('/stop',{stopped:!state.stopped}),state.stopped?'Остановка снята. Кампании остаются на паузе.':'Все кампании приостановлены')}><Power size={16}/>{state.stopped?'Снять аварийную остановку':'Остановить все кампании'}</button></section><section className="card setting">{header(Shield,'Глобальные исключения')}<p>Отказавшиеся адресаты исключаются из всех кампаний рабочей области.</p><form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);run(()=>api('/suppress',{email:f.get('email')}),'Адресат исключён');e.currentTarget.reset();}}><input type="email" name="email" placeholder="email@company.com" aria-label="Исключить email" required/><button disabled={busy}>Добавить</button></form><div className="suppressed">{state.suppressed.map(e=><span key={e}>{e}</span>)}</div></section><section className="card setting">{header(Info,'Режим работы')}<p>Поиск адресатов и подготовка писем работают через подключённую модель. SMTP и автоматический приём писем ещё не подключены, отправка отключена.</p><span className="badge draft">Демонстрационный режим</span></section><section className="card setting">{header(CalendarDays,'Журнал действий')}<p>Создание кампаний, проверки и изменения состояния сохраняются с датой и идентификатором.</p><button className="secondary" onClick={()=>setModal('audit')}>Открыть журнал<ArrowRight size={15}/></button></section></div>}
  <footer className="page-footer"><span><span className="dot"/> Sendina · ваш путь от идеи к результату</span><span>Демо-данные · v0.1</span></footer></main></div>
  {notice&&<div className="toast" role="status"><Check size={18}/>{notice}<button className="icon-button" aria-label="Закрыть уведомление" onClick={()=>setNotice('')}><X size={15}/></button></div>}
- {modal&&<div className="modal-backdrop" onClick={e=>{if(e.target===e.currentTarget)setModal('');}}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><button className="close icon-button" aria-label="Закрыть" onClick={()=>setModal('')}><X/></button><h2 id="modal-title">{({connect:'Подключение ящика',recipients:'Адресаты кампании',confirm:'Подтверждение адресата',mcp:'Коннектор ChatGPT',create:'Новая рассылка',domain:'Подключить почтовый ящик',dns:'Проверка DNS',audit:'Журнал действий',idea:'Обоснование гипотезы',campaign:'Управление кампанией',contacts:'Импорт адресатов',preview:'Предпросмотр писем'} as Record<string,string>)[modal]}</h2>{error&&<div className="alert error" role="alert">{error}</div>}
- {modal==='mcp'&&integration&&<><p>Для подключения в ChatGPT нужен доступный HTTPS-адрес и настроенный OAuth-провайдер.</p><div className="integration-details"><label>URL<input readOnly value={integration.mcp.endpoint}/></label><p>Авторизация: <b>{integration.mcp.authentication}</b></p><p>Streamable HTTP · {integration.mcp.tools.length} tools</p><label>Инструменты</label><ul>{integration.mcp.tools.map((tool:string)=><li key={tool}><code>{tool}</code></li>)}</ul></div><a href="https://developers.openai.com/plugins/deploy/connect-chatgpt" target="_blank" rel="noreferrer">Инструкция подключения ↗</a></>}
+ {modal&&<div className="modal-backdrop" onClick={e=>{if(e.target===e.currentTarget)setModal('');}}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><button className="close icon-button" aria-label="Закрыть" onClick={()=>setModal('')}><X/></button><h2 id="modal-title">{({connections:'Подключения аккаунта',connect:'Подключение ящика',recipients:'Адресаты кампании',confirm:'Подтверждение адресата',mcp:'Коннектор ChatGPT',create:'Новая рассылка',domain:'Подключить почтовый ящик',dns:'Проверка DNS',audit:'Журнал действий',idea:'Обоснование гипотезы',campaign:'Управление кампанией',contacts:'Импорт адресатов',preview:'Предпросмотр писем'} as Record<string,string>)[modal]}</h2>{error&&<div className="alert error" role="alert">{error}</div>}
+ {modal==='mcp'&&integration&&<><p>Добавьте коннектор с этим адресом в ChatGPT. На экране согласия введите код коннектора — он привязывает чат ровно к вашему аккаунту.</p><div className="integration-details"><label>URL<input readOnly value={integration.mcp.endpoint}/></label>
+  <label>Код коннектора<input readOnly type={connector?'text':'password'} value={connector||'••••••••'} onFocus={e=>e.currentTarget.select()}/></label>
+  <div className="button-stack"><button className="secondary small-button" disabled={busy} onClick={()=>run(async()=>setConnector((await api('/settings/connector')).code))}>Показать код</button>
+   <button className="text-link" disabled={busy} onClick={()=>run(async()=>setConnector((await api('/settings/connector',{})).code),'Код коннектора заменён')}>Создать новый</button></div><p>Авторизация: <b>{integration.mcp.authentication}</b></p><p>Streamable HTTP · {integration.mcp.tools.length} tools</p><label>Инструменты</label><ul>{integration.mcp.tools.map((tool:string)=><li key={tool}><code>{tool}</code></li>)}</ul></div><a href="https://developers.openai.com/plugins/deploy/connect-chatgpt" target="_blank" rel="noreferrer">Инструкция подключения ↗</a></>}
  {modal==='create'&&<form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);run(async()=>{await api('/campaigns',Object.fromEntries(f));setModal('');go('Рассылки');},'Кампания создана. Добавьте адресатов для предпросмотра.');}}><p className="muted">Задайте контекст и измеримое целевое событие.</p><label>Название кампании<input name="name" autoFocus required minLength={3} maxLength={150} defaultValue={state.opportunities.find(o=>o.id===selected)?.name??''} placeholder="Например, продажи решения для отелей"/></label><div className="form-row"><label>Цель<select name="goal">{['Продажа услуги','Продажа продукта','Партнёрство','Поиск инвесторов','Найм','Закупки','Обращение','Другое'].map(v=><option key={v}>{v}</option>)}</select></label><label>Рынок<select name="market" defaultValue={state.opportunities.find(o=>o.id===selected)?.market??'США'}>{markets.map(v=><option key={v}>{v}</option>)}</select></label></div><label>Продукт и контекст<textarea name="context" required minLength={10} maxLength={5000} rows={4} defaultValue={state.opportunities.find(o=>o.id===selected)?.offer??''} placeholder="Что вы предлагаете и какую задачу решаете? Используйте только проверяемые факты."/></label><label>Целевое событие<select name="event">{['Встреча','Положительный ответ','Квалифицированный интерес','Получение документа','Покупка','Пересмотр решения'].map(v=><option key={v}>{v}</option>)}</select></label><div className="info-banner compact"><ShieldCheck size={18}/>Кампания создаётся как черновик. Отправка отключена.</div><button className="wide" disabled={busy}>Создать кампанию<ArrowRight size={16}/></button></form>}
  {modal==='domain'&&<form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);run(async()=>{await api('/domains',{email:f.get('email')});setModal('');},'Ящик добавлен. Необходима проверка домена.');}}><p className="muted">Ящики одного домена используют общий лимит. Пароль от почты здесь не требуется.</p><label>Адрес почтового ящика<input autoFocus name="email" type="email" placeholder="you@company.com" required/></label><button className="wide" disabled={busy}>Добавить ящик</button></form>}
+ {modal==='connections'&&(()=>{
+  const steps=[
+   {key:'openai',title:'Модель',lead:'Ключ OpenAI используется для подбора адресатов и подготовки писем. Без него эти действия откажутся работать, а не начнут выдумывать.',
+    done:caps?.connections?.openai?.configured,
+    fields:[['openaiKey','Ключ OpenAI','password','sk-…'],['openaiModel','Модель','text','gpt-4.1-mini'],['aiGatewayUrl','Адрес шлюза (необязательно)','text','https://api.openai.com/v1']]},
+   {key:'search',title:'Поиск адресатов',lead:'С поисковым ключом кандидаты ссылаются на настоящий результат. Без него они остаются неподтверждёнными и не проходят правила.',
+    done:caps?.connections?.search?.configured,
+    fields:[['searchProvider','Провайдер','select',''],['searchKey','Ключ поискового API','password','']]},
+   {key:'google',title:'Google Workspace',lead:'Создайте OAuth-приложение в Google Cloud Console со scope gmail.send и укажите адрес возврата ниже.',
+    done:caps?.connections?.google?.configured,
+    fields:[['google.clientId','Client ID','text',''],['google.clientSecret','Client secret','password','']]},
+   {key:'microsoft',title:'Microsoft 365',lead:'Создайте приложение в Entra ID со scope Mail.Send и offline_access, затем укажите адрес возврата ниже.',
+    done:caps?.connections?.microsoft?.configured,
+    fields:[['microsoft.clientId','Client ID','text',''],['microsoft.clientSecret','Client secret','password',''],['microsoft.tenant','Идентификатор тенанта','text','common']]}];
+  const current=steps[Math.min(step,steps.length-1)];
+  const redirect=`${backendUrl()||location.origin}/oauth/mailbox/callback`;
+  return <>
+   <ol className="wizard-steps">{steps.map((st,i)=><li key={st.key} className={i===step?'current':st.done?'done':''}>
+    <button className="text-link" onClick={()=>setStep(i)}>{st.done?<Check size={12}/>:<span className="step-number">{i+1}</span>}{st.title}</button></li>)}</ol>
+   <p className="muted">{current.lead}</p>
+   {(current.key==='google'||current.key==='microsoft')&&<label>Адрес возврата (укажите его у провайдера)
+    <input readOnly value={redirect} onFocus={e=>e.currentTarget.select()}/></label>}
+   <form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);
+     const patch:any={};
+     for(const [name] of current.fields){const value=String(f.get(name)??'');
+      if(name.includes('.')){const [group,field]=name.split('.');patch[group]={...patch[group],[field]:value};}
+      else patch[name]=value;}
+     run(async()=>{await api('/settings/connections',patch);setCaps(await api('/capabilities'));
+      if(step<steps.length-1)setStep(step+1);else setModal('');},'Настройки сохранены');}}>
+    {current.fields.map(([name,label,kind,placeholder])=>kind==='select'
+     ?<label key={name}>{label}<select name={name} defaultValue={caps?.connections?.search?.provider??''}>
+        <option value="">Не подключён</option><option value="brave">Brave</option><option value="tavily">Tavily</option><option value="serper">Serper</option></select></label>
+     :<label key={name}>{label}<input name={name} type={kind} placeholder={placeholder}
+        defaultValue={name==='openaiModel'?(caps?.connections?.openai?.model??''):name==='microsoft.tenant'?(caps?.connections?.microsoft?.tenant??''):name==='aiGatewayUrl'?(caps?.connections?.openai?.gateway??''):''}/></label>)}
+    <p className="tiny muted">{current.done?'Уже заполнено. Пустое поле оставит сохранённое значение без изменений.':'Поля пока не заполнены.'}</p>
+    <div className="button-stack">
+     {step>0&&<button type="button" className="secondary" onClick={()=>setStep(step-1)}>Назад</button>}
+     <button disabled={busy}>{step<steps.length-1?'Сохранить и далее':'Сохранить и закрыть'}</button>
+     {step<steps.length-1&&<button type="button" className="text-link" onClick={()=>setStep(step+1)}>Пропустить шаг</button>}</div>
+   </form></>;
+ })()}
  {modal==='connect'&&(!detection
   ?<form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);
     run(async()=>setDetection(await api('/mailboxes/detect',{email:f.get('email')})));}}>
@@ -147,7 +239,7 @@ function App(){
   const unconfirmed=people.filter(p=>p.verification==='unverified').length;
   const others=new Set(state.contacts.filter(p=>p.campaignId!==c.id).map(p=>p.email).filter(Boolean));
   const repeated=people.filter(p=>p.email&&others.has(p.email)).length;
-  return <><h3 data-user-content={!c.id.match(/^c[123]$/)}>{c.name}</h3><p data-user-content>{c.context}</p>
+  return <><h3 data-user-content={!c.id.match(/^c[123]$/)}>{c.name}</h3><p data-user-content={!c.id.match(/^c[123]$/)}>{c.context}</p>
   <p className="muted"><Flag market={c.market}/>{c.market} · Целевое событие: {c.event}</p>
   <div className="info-banner compact"><Info size={20}/><div>Адресатов: {people.length} · Писем: {state.messages.filter(m=>m.campaignId===c.id).length}{unconfirmed>0&&<> · Не подтверждено: {unconfirmed}</>}</div></div>
   {repeated>0&&<div className="alert error" role="alert">Повторяющихся адресов из других кампаний: {repeated}. Правила заблокируют их при подготовке писем.</div>}
