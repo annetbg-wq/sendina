@@ -1,0 +1,45 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {spawn} from 'node:child_process';
+import {mkdtemp} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join,resolve} from 'node:path';
+import {Client} from '@modelcontextprotocol/sdk/client/index.js';
+import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+test('API and MCP enforce auth, isolate campaigns, deduplicate, preserve exclusions and stop safely',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'sendina-test-'));
+ const child=spawn(process.execPath,['--import','tsx',resolve('server/index.ts')],{env:{...process.env,PORT:'3102',DATA_DIR:dir,DATABASE_URL:'',APP_TOKEN:'test-ui-secret',MCP_TOKEN:'test-mcp-secret',OAUTH_ISSUER:'',OAUTH_JWKS_URL:''},stdio:'pipe'});
+ let logs='';child.stderr.on('data',d=>logs+=d);child.stdout.on('data',d=>logs+=d);
+ const base='http://127.0.0.1:3102';
+ const req=async(path:string,body?:unknown)=>{const r=await fetch(base+'/api'+path,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer test-ui-secret'},body:body===undefined?undefined:JSON.stringify(body)});return {status:r.status,body:await r.json()};};
+ const client=new Client({name:'sendina-test',version:'1.0'});
+ try{
+  let ready=false;for(let i=0;i<100;i++){try{await fetch(base+'/api/state');ready=true;break;}catch{await new Promise(r=>setTimeout(r,100));}}assert.ok(ready,logs);
+  assert.equal((await fetch(base+'/api/state')).status,401);
+  assert.equal((await fetch(base+'/mcp',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})).status,401);
+  assert.equal((await req('/campaigns',{name:'x'})).status,400);
+  const input={name:'Integration test',market:'United States',goal:'Partnership',context:'A verified context for the campaign',event:'Meeting'};
+  const c=(await req('/campaigns',input)).body;
+  const c2=(await req('/campaigns',{...input,name:'Second campaign'})).body;
+  assert.notEqual(c.id,c2.id);
+  const contact={email:'test@recipient.example',name:'Test',company:'Example',source:'https://recipient.example/contact',basis:'Documented consent',reason:'The recipient asked for product details'};
+  assert.equal((await req(`/campaigns/${c.id}/contacts`,{contacts:[contact]})).body.added,1);
+  assert.equal((await req(`/campaigns/${c.id}/contacts`,{contacts:[contact]})).body.added,0);
+  const p1=(await req(`/campaigns/${c.id}/preview`,{})).body;
+  const p2=(await req(`/campaigns/${c.id}/preview`,{})).body;
+  assert.equal(p1[0].id,p2[0].id);assert.equal(p1[0].policy.decision,'block');
+  assert.deepEqual((await req(`/campaigns/${c2.id}/preview`,{})).body,[]);
+  const reply={campaignId:c.id,email:contact.email,text:'Please unsubscribe',category:'unsubscribe',eventId:'event-test-1'};
+  await req('/replies',reply);await req('/replies',reply);
+  let s=(await req('/state')).body;assert.equal(s.replies.filter((r:any)=>r.id===reply.eventId).length,1);assert.ok(s.suppressed.includes(contact.email));
+  await req(`/campaigns/${c2.id}/contacts`,{contacts:[contact]});await req(`/campaigns/${c2.id}/status`,{status:'active'});
+  assert.equal((await req(`/campaigns/${c2.id}/preview`,{})).body[0].policy.reason,'GLOBAL_SUPPRESSION');
+  await req('/stop',{stopped:true});assert.equal((await req(`/campaigns/${c2.id}/status`,{status:'active'})).status,422);
+  assert.equal((await req('/send',{})).status,409);
+  await client.connect(new StreamableHTTPClientTransport(new URL(base+'/mcp'),{requestInit:{headers:{Authorization:'Bearer test-mcp-secret'}}}));
+  const tools=await client.listTools();assert.equal(tools.tools.length,10);assert.ok(tools.tools.find(t=>t.name==='get_dashboard')?.annotations?.readOnlyHint);
+  const dashboard:any=await client.callTool({name:'get_dashboard',arguments:{}});assert.equal(dashboard.structuredContent.result.sendingEnabled,false);
+  await client.callTool({name:'emergency_stop',arguments:{stopped:false}});
+  s=(await req('/state')).body;assert.equal(s.stopped,false);assert.equal(s.campaigns.find((x:any)=>x.id===c2.id).status,'paused');
+ }finally{await client.close();child.kill();}
+});
