@@ -16,7 +16,7 @@ export function mountMcp(app:Express){
  const jwks=process.env.OAUTH_JWKS_URL?createRemoteJWKSet(new URL(process.env.OAUTH_JWKS_URL)):null;
  const authorizationServers=()=>oauthEnabled()?[publicUrl()]:issuer?[issuer]:[];
  const method=()=>oauthEnabled()?'OAuth 2.1':issuer&&jwks?'OAuth 2.1 (внешний провайдер)':process.env.MCP_TOKEN?'Токен разработчика':'Не настроено';
- const tools=['get_capabilities','get_dashboard','list_campaigns','get_campaign','create_campaign','find_recipients','import_contacts','confirm_recipient','prepare_messages','set_campaign_status','record_reply','exclude_recipient','emergency_stop','list_opportunities','list_mailboxes','test_mailbox'];
+ const tools=['get_capabilities','get_dashboard','list_campaigns','get_campaign','create_campaign','find_recipients','import_contacts','confirm_recipient','prepare_messages','set_campaign_status','record_reply','exclude_recipient','emergency_stop','list_opportunities','list_mailboxes','verify_mailbox','sync_replies','test_mailbox'];
 
  app.get(['/.well-known/oauth-protected-resource','/.well-known/oauth-protected-resource/mcp'],(_req,res)=>
   res.json({resource:resourceUrl(),authorization_servers:authorizationServers(),scopes_supported:['sendina:read','sendina:write'],bearer_methods_supported:['header'],resource_name:'Sendina'}));
@@ -93,6 +93,10 @@ export function mountMcp(app:Express){
     category:z.enum(['positive','neutral','objection','referral','later','unsubscribe','negative','automatic','bounce'])},true,true,a=>operations.recordReply(account,a));
   register('exclude_recipient','Globally exclude a recipient across all campaigns.',{email:z.email()},true,true,a=>operations.suppress(account,a));
   register('list_mailboxes','Sending readiness of every domain and mailbox, with what is still missing.',{},false,true,()=>mailboxOperations.status(account));
+  register('verify_mailbox','Re-run the full mailbox proof: credential, test send, incoming channel, and reading that message back.',
+   {email:z.email()},true,false,a=>mailboxOperations.verify(account,a));
+  register('sync_replies','Pull replies from a connected mailbox and file them against their campaign and recipient.',
+   {email:z.email(),limit:z.number().int().min(1).max(100).optional()},true,true,a=>mailboxOperations.syncReplies(account,a));
   register('test_mailbox','Send one real test message through a connected mailbox. Readiness depends on it.',
    {email:z.email(),to:z.email().optional()},true,false,a=>mailboxOperations.testSend(account,a));
   register('emergency_stop','Stop all campaigns or lift the stop. Lifting does not resume campaigns.',{stopped:z.boolean()},true,true,a=>operations.emergencyStop(account,a));

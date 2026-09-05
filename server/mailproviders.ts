@@ -1,5 +1,6 @@
 import {resolveMx} from 'node:dns/promises';
 import nodemailer from 'nodemailer';
+import {fetchIncoming,verifyImap,type Incoming,type ImapAccess} from './imap';
 
 export type Provider='google'|'microsoft'|'smtp';
 export type Detection={email:string;domain:string;provider:Provider;workspace:boolean;personal:boolean;mx:string[];note:string};
@@ -43,7 +44,7 @@ export function oauthConfig(provider:Provider,apps:MailApps):OauthConfig|null{
   const {clientId,clientSecret}=apps.google;
   if(!clientId||!clientSecret)return null;
   return {authorize:providerUrl('https://accounts.google.com/o/oauth2/v2/auth'),token:providerUrl('https://oauth2.googleapis.com/token'),
-   scope:'https://www.googleapis.com/auth/gmail.send email',clientId,clientSecret,
+   scope:'https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly email',clientId,clientSecret,
    extra:{access_type:'offline',prompt:'consent'}};
  }
  if(provider==='microsoft'){
@@ -52,7 +53,7 @@ export function oauthConfig(provider:Provider,apps:MailApps):OauthConfig|null{
   const tenant=apps.microsoft.tenant||'common';
   return {authorize:providerUrl(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/authorize`),
    token:providerUrl(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`),
-   scope:'https://graph.microsoft.com/Mail.Send offline_access openid email',clientId,clientSecret,
+   scope:'https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Mail.Read offline_access openid email',clientId,clientSecret,
    extra:{prompt:'consent'}};
  }
  return null;
@@ -116,4 +117,71 @@ export async function verifySmtp(secret:any){
  const transport=nodemailer.createTransport({host:secret.host,port:secret.port,
   secure:secret.port===465,auth:{user:secret.user,pass:secret.pass}});
  await transport.verify();
+}
+
+/** Proves the credential works before anything is sent: a token refresh, or an SMTP login. */
+export async function verifyAccess(secret:any,apps:MailApps){
+ if(secret.kind==='oauth'){await accessToken(secret.provider,secret.refreshToken,apps);return 'Токен провайдера принят';}
+ await verifySmtp(secret);
+ return `SMTP ${secret.host} принял вход`;
+}
+
+const imapAccess=(secret:any):ImapAccess=>({host:secret.imapHost,port:secret.imapPort,
+ secure:secret.imapSecure!==false,user:secret.imapUser||secret.user,pass:secret.pass});
+
+/** Confirms the incoming channel answers, whichever way this mailbox receives mail. */
+export async function verifyIncomingChannel(secret:any,apps:MailApps){
+ if(secret.kind==='oauth'){
+  const messages=await readIncoming(secret,apps,1);
+  return `Входящие ${secret.provider==='google'?'Gmail':'Microsoft Graph'} доступны (${messages.length})`;
+ }
+ if(!secret.imapHost)throw Error('IMAP не настроен для этого ящика.');
+ const box=await verifyImap(imapAccess(secret));
+ return `IMAP ${secret.imapHost}: писем во входящих ${box.messages}`;
+}
+
+/** One reading interface over IMAP, Gmail and Microsoft Graph. */
+export async function readIncoming(secret:any,apps:MailApps,limit=25):Promise<Incoming[]>{
+ if(secret.kind!=='oauth'){
+  if(!secret.imapHost)throw Error('IMAP не настроен для этого ящика.');
+  return fetchIncoming(imapAccess(secret),{limit,sinceUid:secret.sinceUid});
+ }
+ const token=await accessToken(secret.provider,secret.refreshToken,apps);
+ const auth={Authorization:`Bearer ${token}`};
+ if(secret.provider==='google'){
+  const list=await fetch(providerUrl(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${limit}`),{headers:auth});
+  if(!list.ok)throw Error(`Gmail не отдал входящие: ${(await list.text()).slice(0,200)}`);
+  const ids=((await list.json())?.messages??[]).map((m:any)=>String(m.id));
+  const out:Incoming[]=[];
+  for(const id of ids.slice(0,limit)){
+   const r=await fetch(providerUrl(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`),{headers:auth});
+   if(!r.ok)continue;
+   const message=await r.json();
+   const headers:Record<string,string>={};
+   for(const h of message?.payload?.headers??[])headers[String(h.name).toLowerCase()]=String(h.value);
+   out.push({uid:0,from:(headers.from?.match(/<([^>]+)>/)?.[1]??headers.from??'').toLowerCase(),
+    subject:headers.subject??'',text:gmailText(message?.payload),
+    messageId:headers['message-id']??'',inReplyTo:headers['in-reply-to']??'',
+    references:(headers.references??'').split(/\s+/).filter(Boolean),
+    at:new Date(Number(message?.internalDate??Date.now())).toISOString()});
+  }
+  return out;
+ }
+ const r=await fetch(providerUrl(`https://graph.microsoft.com/v1.0/me/messages?$top=${limit}`),{headers:auth});
+ if(!r.ok)throw Error(`Microsoft Graph не отдал входящие: ${(await r.text()).slice(0,200)}`);
+ return ((await r.json())?.value??[]).map((m:any)=>({uid:0,
+  from:String(m?.from?.emailAddress?.address??'').toLowerCase(),
+  subject:String(m?.subject??''),text:String(m?.body?.content??m?.bodyPreview??''),
+  messageId:String(m?.internetMessageId??''),inReplyTo:'',references:[],
+  at:String(m?.receivedDateTime??new Date().toISOString())}));
+}
+
+/** Gmail delivers the body inside a MIME tree; the plain part is the one worth reading. */
+function gmailText(payload:any):string{
+ if(!payload)return '';
+ if(payload.mimeType==='text/plain'&&payload.body?.data)
+  return Buffer.from(String(payload.body.data),'base64url').toString('utf8');
+ for(const part of payload.parts??[]){const found=gmailText(part);if(found)return found;}
+ if(payload.body?.data)return Buffer.from(String(payload.body.data),'base64url').toString('utf8');
+ return '';
 }

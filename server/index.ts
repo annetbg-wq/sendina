@@ -11,6 +11,7 @@ import {mountOauth} from './oauth';
 import {bindAddress} from './config';
 import {accountForSession,listAccounts,decideAccount,connectorCode,type Account} from './accounts';
 import {accountSettings,saveAccountSettings,maskSettings} from './accountsettings';
+import {platformSettings,savePlatformSettings,maskPlatform} from './platform';
 import type {Ctx} from './context';
 
 const app=express();app.use(express.json({limit:'1mb'}));
@@ -61,7 +62,9 @@ app.post('/api/settings/recipients',route((c,i)=>operations.setRecipientMode(c,i
 app.get('/api/mailboxes/status',route(ctx=>mailboxOperations.status(ctx)));
 app.post('/api/mailboxes/detect',route((c,i)=>mailboxOperations.detect(c,i)));
 app.post('/api/mailboxes/oauth',route((c,i)=>mailboxOperations.startOauth(c,i)));
-app.post('/api/mailboxes/smtp',route((c,i)=>mailboxOperations.connectSmtp(c,i)));
+app.post('/api/mailboxes/connect',route((c,i)=>mailboxOperations.connectMailbox(c,i)));
+app.post('/api/mailboxes/verify',route((c,i)=>mailboxOperations.verify(c,i)));
+app.post('/api/mailboxes/sync',route((c,i)=>mailboxOperations.syncReplies(c,i)));
 app.post('/api/mailboxes/test',route((c,i)=>mailboxOperations.testSend(c,i)));
 app.post('/api/mailboxes/disconnect',route((c,i)=>mailboxOperations.disconnect(c,i)));
 
@@ -74,6 +77,8 @@ app.post('/api/settings/connector',route(async ctx=>({code:await connectorCode(c
 /** Superadmins manage who may enter. They never read another account's workspace. */
 const superadminOnly=(req:express.Request,res:express.Response,next:express.NextFunction)=>
  req.account?.role==='superadmin'?next():res.status(403).json({error:'Доступ только для суперадминов'});
+app.get('/api/platform',superadminOnly,async(_req,res)=>res.json(maskPlatform(await platformSettings())));
+app.post('/api/platform',superadminOnly,async(req,res)=>res.json(await savePlatformSettings(req.body)));
 app.get('/api/accounts',superadminOnly,async(_req,res)=>res.json(await listAccounts()));
 app.post('/api/accounts/decide',superadminOnly,async(req,res)=>res.json(await decideAccount(req.account!,req.body)));
 

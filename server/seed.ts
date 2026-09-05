@@ -1,8 +1,13 @@
 export const noDns=()=>({spf:false,dkim:false,dmarc:false,checkedAt:null as string|null});
 /** A mailbox starts unconnected. Only a successful test send can change that. */
+const check=()=>({status:'none' as string,at:null as string|null,detail:''});
 export const box=(email:string)=>({email,provider:'unknown' as string,workspace:true,personal:false,
   connection:'none' as string,connectedAt:null as string|null,
-  testSend:{status:'none' as string,at:null as string|null,detail:''}});
+  /** The four proofs a mailbox must give, in the order they are attempted. */
+  auth:check(),testSend:check(),imap:check(),incoming:check(),
+  /** Non-secret shape of the connection, so the interface can show what was detected. */
+  transport:null as null|{smtp:{host:string;port:number;secure:boolean};imap:{host:string;port:number;secure:boolean};source:string;label:string},
+  incomingUid:0});
 
 export const seed = () => ({
   demo:true, stopped:false,
@@ -32,7 +37,12 @@ export function normalize(s:any){
   s.settings??={recipientMode:'auto'};
   for(const d of s.domains??[]){
     d.dns??=noDns();
-    d.mailboxes=(d.mailboxes??[]).map((m:any)=>typeof m==='string'?box(m):{...box(m.email),...m});
+    d.mailboxes=(d.mailboxes??[]).map((m:any)=>{
+      const merged=typeof m==='string'?box(m):{...box(m.email),...m};
+      for(const field of ['auth','testSend','imap','incoming'])
+        if(!merged[field]||typeof merged[field]!=='object')merged[field]={status:'none',at:null,detail:''};
+      return merged;
+    });
     delete d.verified;
   }
   return s;

@@ -122,7 +122,7 @@ test('one core serves the UI and MCP: OAuth, recipient research, bulk detection 
    return r.structuredContent.result;
   };
   const tools=await client.listTools();
-  assert.equal(tools.tools.length,16);
+  assert.equal(tools.tools.length,18);
 
   const campaign=await call('create_campaign',{name:'Booking automation outreach',market:'United Kingdom',
    goal:'Sell a service',context:'Booking automation for independent hotels',event:'Meeting'});

@@ -6,17 +6,42 @@ import {getAuth,setAuth} from './authstore';
 import {publicAddress} from './config';
 import {accountSettings} from './accountsettings';
 import type {Ctx} from './context';
-import {detectProvider,oauthConfig,oauthReady,exchangeCode,sendMessage,verifySmtp,type Provider,type MailApps} from './mailproviders';
+import {detectProvider,oauthConfig,oauthReady,exchangeCode,sendMessage,verifyAccess,verifyIncomingChannel,readIncoming,type Provider,type MailApps} from './mailproviders';
+import {guessMailSettings,type MailSettings} from './autoconfig';
+import {platformSettings,resolveMailApps,appOwner} from './platform';
+import {sealFields,openFields} from './secrets';
 import {mailboxReadiness,domainReadiness} from './readiness';
 
 /** Credentials live in the auth store, never in the workspace state the UI can read. */
 const secretKey=(accountId:string,email:string)=>`mailbox:${accountId}:${email.toLowerCase()}`;
 export const redirectUri=()=>`${publicAddress(process.env)}/oauth/mailbox/callback`;
 
+/** Platform applications win, so most people never see a client id at all. */
 const appsFor=async(accountId:string):Promise<MailApps>=>{
  const s=await accountSettings(accountId);
- return {google:s.google,microsoft:s.microsoft};
+ return resolveMailApps(await platformSettings(),{google:s.google,microsoft:s.microsoft});
 };
+const secretFields=['pass','refreshToken'];
+const putSecret=async(accountId:string,email:string,secret:any)=>setAuth(secretKey(accountId,email),await sealFields(secret,secretFields));
+const getSecret=async(accountId:string,email:string)=>{
+ const stored=await getAuth<any>(secretKey(accountId,email));
+ return stored?openFields(stored,secretFields):null;
+};
+
+/** Waits for one specific message to come back, whichever way this mailbox receives mail. */
+async function awaitMarker(secret:any,apps:MailApps,marker:string){
+ const attempts=Number(process.env.VERIFY_ATTEMPTS??6);
+ const delay=Number(process.env.VERIFY_DELAY_MS??2500);
+ for(let attempt=0;attempt<attempts;attempt++){
+  try{
+   const messages=await readIncoming(secret,apps,30);
+   const found=messages.find(m=>m.subject.includes(marker)||m.text.includes(marker));
+   if(found)return found;
+  }catch(e:any){if(attempt===attempts-1)throw e;}
+  if(attempt<attempts-1)await new Promise(r=>setTimeout(r,delay));
+ }
+ return null;
+}
 
 type Pending={accountId:string;email:string;provider:Provider;expires:number};
 const pending=new Map<string,Pending>();
@@ -24,9 +49,14 @@ const pending=new Map<string,Pending>();
 export const mailboxSchemas={
  email:z.object({email:z.email()}),
  start:z.object({email:z.email(),provider:z.enum(['google','microsoft']).optional()}),
- smtp:z.object({email:z.email(),host:z.string().min(1),port:z.number().int().min(1).max(65535),
-  user:z.string().min(1),pass:z.string().min(1)}),
- test:z.object({email:z.email(),to:z.email().optional()})
+ server:z.object({host:z.string().min(1),port:z.number().int().min(1).max(65535),secure:z.boolean().default(true)}),
+ test:z.object({email:z.email(),to:z.email().optional()}),
+ sync:z.object({email:z.email(),limit:z.number().int().min(1).max(100).default(30)}),
+ connect:z.object({email:z.email(),
+  smtp:z.object({host:z.string().min(1),port:z.number().int().min(1).max(65535),secure:z.boolean().default(true)}),
+  imap:z.object({host:z.string().min(1),port:z.number().int().min(1).max(65535),secure:z.boolean().default(true)}),
+  user:z.string().min(1).optional(),pass:z.string().min(1),
+  source:z.string().max(40).optional(),label:z.string().max(160).optional()})
 };
 
 const findMailbox=(s:any,email:string)=>{
@@ -54,15 +84,38 @@ async function markConnection(accountId:string,email:string,connection:'oauth'|'
   return {mailbox,domain:{id:domain.id,name:domain.name},readiness:mailboxReadiness(domain,mailbox,s.stopped)};});
 }
 
+const rules:[RegExp,string][]=[
+ [/отпиш|отписаться|unsubscribe|remove me/i,'unsubscribe'],
+ [/не интерес|не актуал|not interested|no thanks|откажем/i,'negative'],
+ [/недостав|undeliverable|delivery failed|mailer-daemon/i,'bounce'],
+ [/автоответ|out of office|automatic reply|отпуск/i,'automatic'],
+ [/перешл|обратитесь к|forwarding you|my colleague|коллег/i,'referral'],
+ [/позже|позднее|next quarter|later|через месяц/i,'later'],
+ [/интересно|давайте|готовы обсудить|встреч|meeting|interested|call/i,'positive'],
+ [/сколько стоит|цена|как именно|подробн|question|уточн/i,'neutral']
+];
+/** A stated heuristic, not an understanding of the message. Categories stay editable by hand. */
+export const classify=(text:string)=>rules.find(([pattern])=>pattern.test(text))?.[1]??'neutral';
+
 export const mailboxOperations={
- /** Detection only reports who serves the domain. It never marks anything connected. */
+ /** Works out everything the address alone can tell us: who serves the domain, whether Sendina
+     can offer a consent button, and, for every other provider, the settings to connect with.
+     Nothing here connects anything. */
  detect:async(ctx:Ctx,input:unknown)=>{const {email}=mailboxSchemas.email.parse(input);
   const detection=await detectProvider(email);
-  const apps=await appsFor(ctx.accountId);
-  const route=detection.provider==='smtp'?'smtp':oauthReady(detection.provider,apps)?'oauth':'oauth-unconfigured';
-  return {...detection,route,
-   oauthConfigured:detection.provider!=='smtp'&&oauthReady(detection.provider,apps),
-   redirectUri:redirectUri()};},
+  const platform=await platformSettings();
+  const account=await accountSettings(ctx.accountId);
+  const own={google:account.google,microsoft:account.microsoft};
+  const apps=resolveMailApps(platform,own);
+  if(detection.provider!=='smtp'){
+   const owner=appOwner(platform,own,detection.provider);
+   return {...detection,route:owner==='none'?'oauth-unconfigured':'oauth',appOwner:owner,
+    oauthConfigured:oauthReady(detection.provider,apps),settings:null,redirectUri:redirectUri()};
+  }
+  let settings:MailSettings|null=null;
+  try{settings=await guessMailSettings(detection.domain,detection.mx);}catch{settings=null;}
+  return {...detection,route:settings?'auto':'manual',appOwner:'none',
+   oauthConfigured:false,settings,redirectUri:redirectUri()};},
 
  /** Builds the provider consent URL. The mailbox stays unconnected until the callback succeeds. */
  startOauth:async(ctx:Ctx,input:unknown)=>{const {email,provider}=mailboxSchemas.start.parse(input);
@@ -90,36 +143,85 @@ export const mailboxOperations={
   const entry=pending.get(state);pending.delete(state);
   if(!entry||entry.expires<Date.now())throw Error('Ссылка подключения устарела. Начните заново.');
   const tokens=await exchangeCode(entry.provider,code,redirectUri(),await appsFor(entry.accountId));
-  await setAuth(secretKey(entry.accountId,entry.email),{kind:'oauth',provider:entry.provider,email:entry.email,
+  await putSecret(entry.accountId,entry.email,{kind:'oauth',provider:entry.provider,email:entry.email,
    refreshToken:tokens.refreshToken,scope:tokens.scope,at:new Date().toISOString()});
   await markConnection(entry.accountId,entry.email,'oauth',entry.provider);
   return {email:entry.email,provider:entry.provider};},
 
- connectSmtp:async(ctx:Ctx,input:unknown)=>{const body=mailboxSchemas.smtp.parse(input);
-  const secret={kind:'smtp',provider:'smtp' as Provider,email:body.email.toLowerCase(),
-   host:body.host,port:body.port,user:body.user,pass:body.pass};
-  await verifySmtp(secret);
-  await setAuth(secretKey(ctx.accountId,secret.email),{...secret,at:new Date().toISOString()});
-  return markConnection(ctx.accountId,secret.email,'smtp','smtp');},
+ /** Connects a mailbox at any provider, then proves it works before claiming anything. */
+ connectMailbox:async(ctx:Ctx,input:unknown)=>{const body=mailboxSchemas.connect.parse(input);
+  const email=body.email.toLowerCase();
+  const secret={kind:'smtp',provider:'smtp' as Provider,email,
+   host:body.smtp.host,port:body.smtp.port,secure:body.smtp.secure,
+   user:body.user||email,pass:body.pass,
+   imapHost:body.imap.host,imapPort:body.imap.port,imapSecure:body.imap.secure,imapUser:body.user||email,
+   at:new Date().toISOString()};
+  await putSecret(ctx.accountId,email,secret);
+  await change(ctx.accountId,s=>{const {mailbox}=ensure(s,email);
+   Object.assign(mailbox,{provider:'smtp',connection:'smtp',connectedAt:new Date().toISOString(),
+    transport:{smtp:body.smtp,imap:body.imap,source:body.source??'manual',label:body.label??'Указано вручную'},
+    auth:{status:'none',at:null,detail:''},testSend:{status:'none',at:null,detail:''},
+    imap:{status:'none',at:null,detail:''},incoming:{status:'none',at:null,detail:''}});
+   audit(s,`Ящик ${email} подключён (SMTP ${body.smtp.host}, IMAP ${body.imap.host}). Идёт проверка.`);});
+  return mailboxOperations.verify(ctx,{email});},
 
- /** The only proof a mailbox works: one real message through the connected account. */
+ /** The full proof: the credential is accepted, a real message leaves, the incoming channel
+     answers, and that same message is read back. Readiness depends on all four. */
+ verify:async(ctx:Ctx,input:unknown)=>{const {email}=mailboxSchemas.email.parse(input);
+  findMailbox(await read(ctx.accountId),email);
+  const secret=await getSecret(ctx.accountId,email);
+  if(!secret)throw Error('Ящик не подключён. Сначала подключите его.');
+  const apps=await appsFor(ctx.accountId);
+  const marker=`SND-${randomBytes(5).toString('hex').toUpperCase()}`;
+  const results:Record<string,{status:'ok'|'failed';detail:string}>={};
+  const step=async(name:string,run:()=>Promise<string>)=>{
+   try{results[name]={status:'ok',detail:(await run()).slice(0,300)};return true;}
+   catch(e:any){results[name]={status:'failed',detail:String(e.message).slice(0,300)};return false;}
+  };
+
+  const authOk=await step('auth',()=>verifyAccess(secret,apps));
+  const sendOk=authOk&&await step('testSend',async()=>{
+   const sent=await sendMessage(secret,email,`Sendina — проверка ${marker}`,
+    `Проверка ящика ${email}. Код ${marker}.
+
+Это письмо подтверждает отправку и приём. Адресатов кампаний оно не затрагивает.`,apps);
+   return `Отправлено через ${sent.via}`;});
+  const channelOk=authOk&&await step('imap',()=>verifyIncomingChannel(secret,apps));
+  if(sendOk&&channelOk)await step('incoming',async()=>{
+   const found=await awaitMarker(secret,apps,marker);
+   if(!found)throw Error(`Тестовое письмо ${marker} не появилось во входящих. Проверьте приём почты.`);
+   return `Входящее письмо ${marker} прочитано`;});
+  else results.incoming={status:'failed',detail:'Пропущено: отправка или приём не прошли.'};
+
+  return change(ctx.accountId,s=>{const {domain,mailbox}=findMailbox(s,email);
+   const at=new Date().toISOString();
+   for(const [name,value] of Object.entries(results))mailbox[name]={...value,at};
+   const box=mailboxReadiness(domain,mailbox,s.stopped);
+   audit(s,`Проверка ящика ${email}: ${Object.entries(results).map(([k,v])=>`${k} ${v.status}`).join(', ')}.`);
+   return {email,checks:results,readiness:box,ready:box.ready,
+    domainReadiness:domainReadiness(domain,s.stopped)};});},
+
+ /** Kept as a single re-run of the send step for an already verified mailbox. */
  testSend:async(ctx:Ctx,input:unknown)=>{const {email,to}=mailboxSchemas.test.parse(input);
   findMailbox(await read(ctx.accountId),email);
-  const secret=await getAuth<any>(secretKey(ctx.accountId,email));
+  const secret=await getSecret(ctx.accountId,email);
   if(!secret)throw Error('Ящик не подключён. Сначала подключите его через OAuth или SMTP.');
   const target=(to??email).toLowerCase();
-  const subject='Sendina — тестовая отправка';
-  const text=`Это тестовое письмо Sendina.\n\nОно подтверждает, что ящик ${email} действительно может отправлять почту.\nНикаких адресатов кампании оно не затрагивает.`;
   let result:{status:'ok'|'failed';detail:string};
-  try{const sent=await sendMessage(secret,target,subject,text,await appsFor(ctx.accountId));
+  try{const sent=await sendMessage(secret,target,'Sendina — тестовая отправка',
+    `Это тестовое письмо Sendina.
+
+Оно подтверждает, что ящик ${email} действительно может отправлять почту.
+Никаких адресатов кампании оно не затрагивает.`,
+    await appsFor(ctx.accountId));
    result={status:'ok',detail:`Доставлено через ${sent.via}`};}
   catch(e:any){result={status:'failed',detail:String(e.message).slice(0,300)};}
   return change(ctx.accountId,s=>{const {domain,mailbox}=findMailbox(s,email);
    mailbox.testSend={status:result.status,at:new Date().toISOString(),detail:result.detail};
-   audit(s,`Тестовая отправка ${email}: ${result.status==='ok'?'успешно':'ошибка'}. ${result.detail}`);
    const box=mailboxReadiness(domain,mailbox,s.stopped);
-   return {email,testSend:mailbox.testSend,readiness:box,
-    domainReadiness:domainReadiness(domain,s.stopped),ready:box.ready};});},
+   audit(s,`Тестовая отправка ${email}: ${result.status==='ok'?'успешно':'ошибка'}. ${result.detail}`);
+   return {email,testSend:mailbox.testSend,readiness:box,ready:box.ready,
+    domainReadiness:domainReadiness(domain,s.stopped)};});},
 
  disconnect:async(ctx:Ctx,input:unknown)=>{const {email}=mailboxSchemas.email.parse(input);
   await setAuth(secretKey(ctx.accountId,email),null);
@@ -127,6 +229,41 @@ export const mailboxOperations={
    Object.assign(mailbox,{connection:'none',connectedAt:null,testSend:{status:'none',at:null,detail:''}});
    audit(s,`Ящик ${email} отключён.`);
    return {mailbox,readiness:mailboxReadiness(domain,mailbox,s.stopped)};});},
+
+ /** Pulls replies in and files them against the campaign and recipient they answer. */
+ syncReplies:async(ctx:Ctx,input:unknown)=>{const {email,limit}=mailboxSchemas.sync.parse(input);
+  const before=await read(ctx.accountId);
+  findMailbox(before,email);
+  const secret=await getSecret(ctx.accountId,email);
+  if(!secret)throw Error('Ящик не подключён. Сначала подключите его.');
+  const messages=await readIncoming(secret,await appsFor(ctx.accountId),limit);
+  return change(ctx.accountId,s=>{const {mailbox}=findMailbox(s,email);
+   let added=0,unmatched=0,highest=Number(mailbox.incomingUid??0);
+   for(const message of messages){
+    if(message.uid>highest)highest=message.uid;
+    const from=message.from.toLowerCase();
+    if(!from||from===email.toLowerCase())continue;
+    const eventId=message.messageId||`${email}:${message.uid}`;
+    if(s.replies.some((r:any)=>r.id===eventId))continue;
+    // A reply belongs to the campaign that holds this address as a recipient.
+    const contact=s.contacts.find((c:any)=>c.email===from);
+    const campaignId=contact?.campaignId
+     ??s.messages.find((m:any)=>m.email===from)?.campaignId;
+    if(!campaignId){unmatched++;continue;}
+    const campaign=s.campaigns.find((c:any)=>c.id===campaignId);
+    if(!campaign){unmatched++;continue;}
+    const category=classify(`${message.subject}
+${message.text}`);
+    s.replies.unshift({id:eventId,campaignId,email:from,text:message.text.slice(0,4000),
+     category,name:contact?.name??from,company:contact?.company??'',at:message.at,
+     inReplyTo:message.inReplyTo,messageId:message.messageId,source:'inbox',auto:true} as any);
+    if(['unsubscribe','negative'].includes(category)&&!s.suppressed.includes(from))s.suppressed.push(from);
+    if(category==='positive')campaign.positive++;
+    added++;
+   }
+   mailbox.incomingUid=highest;
+   if(added||unmatched)audit(s,`Приём ответов ${email}: добавлено ${added}, без совпадения ${unmatched}.`);
+   return {email,added,unmatched,scanned:messages.length};});},
 
  /** Readiness of every domain and mailbox, with the full list of what is still missing. */
  status:async(ctx:Ctx)=>{const s=await read(ctx.accountId);

@@ -10,7 +10,13 @@ import {mailboxReadiness,domainReadiness} from '../server/readiness';
 const navigation=[['Главная',House],['Рассылки',Send],['Возможности',Lightbulb],['Рынки',Globe],['Домены и почты',Mail],['Ответы',MessageCircle],['Аналитика',ChartNoAxesColumnIncreasing],['Настройки',Settings]] as const;
 const providers:Record<string,string>={google:'Google Workspace',microsoft:'Microsoft 365',smtp:'SMTP',unknown:'Провайдер не определён'};
 const connections:Record<string,string>={none:'не подключён',oauth:'подключён по OAuth',smtp:'подключён по SMTP'};
-const blockers:Record<string,string>={EMERGENCY_STOP:'Аварийная остановка',NO_MAILBOX:'Нет ящиков',NOT_CONNECTED:'Ящик не подключён',TEST_SEND_REQUIRED:'Нужна тестовая отправка',TEST_SEND_FAILED:'Тестовая отправка не прошла',DNS_NOT_CHECKED:'DNS не проверялся',SPF_MISSING:'Нет записи SPF',DKIM_MISSING:'Нет записи DKIM',DMARC_MISSING:'Нет записи DMARC'};
+const blockers:Record<string,string>={EMERGENCY_STOP:'Аварийная остановка',NO_MAILBOX:'Нет ящиков',NOT_CONNECTED:'Ящик не подключён',
+ AUTH_REQUIRED:'Нужна проверка входа',AUTH_FAILED:'Вход не принят',
+ TEST_SEND_REQUIRED:'Нужна тестовая отправка',TEST_SEND_FAILED:'Тестовая отправка не прошла',
+ INCOMING_CHANNEL_REQUIRED:'Нужна проверка приёма',INCOMING_CHANNEL_FAILED:'Приём почты недоступен',
+ INCOMING_MESSAGE_REQUIRED:'Тестовое письмо ещё не прочитано',INCOMING_MESSAGE_FAILED:'Тестовое письмо не пришло',
+ DNS_NOT_CHECKED:'DNS не проверялся',SPF_MISSING:'Нет записи SPF',DKIM_MISSING:'Нет записи DKIM',DMARC_MISSING:'Нет записи DMARC'};
+const checkLabels:[string,string][]=[['auth','Вход'],['testSend','Отправка'],['imap','Приём'],['incoming','Чтение письма']];
 const reasons:Record<string,string>={CHECKS_PASSED:'Разрешено правилами',EMERGENCY_STOP:'Аварийная остановка',CAMPAIGN_PAUSED:'Кампания не активна',GLOBAL_SUPPRESSION:'Адресат исключён',REPLY_RECEIVED:'Ответ уже получен',DUPLICATE_RECIPIENT:'Повтор адреса в другой кампании',LEGAL_BASIS_REQUIRED:'Нет правового основания',CONTACT_REASON_REQUIRED:'Нет причины контакта — похоже на спам',SOURCE_UNVERIFIED:'Источник не подтверждён',DOMAIN_UNVERIFIED:'Домен не проверен',DOMAIN_LIMIT:'Исчерпан лимит домена'};
 const categories:Record<string,string>={positive:'Положительный',neutral:'Уточнение',objection:'Возражение',referral:'Переадресация',later:'Позже',unsubscribe:'Отписка',negative:'Отказ',automatic:'Автоответ',bounce:'Недоставка'};
 
@@ -25,6 +31,7 @@ function App(){
  const [caps,setCaps]=useState<any>(null);
  const [detection,setDetection]=useState<any>(null);
  const [connector,setConnector]=useState('');
+ const [advanced,setAdvanced]=useState(false);
  useEffect(()=>{localStorage.setItem('sendina-locale',locale);document.documentElement.lang=locale;document.title=locale==='ru'?'Sendina — Монетизатор':'Sendina — Monetizer';},[locale]);
  const [state,setState]=useState<State|null>(null),[page,setPage]=useState('Главная'),[query,setQuery]=useState(''),[modal,setModal]=useState(''),[notice,setNotice]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[selected,setSelected]=useState(''),[preview,setPreview]=useState<any[]>([]),[replyFilter,setReplyFilter]=useState('all'),[menu,setMenu]=useState(false);
  const reload=async()=>{setState(await api('/state'));api('/capabilities').then(c=>{setCaps(c);setAccount(c.account??null);}).catch(()=>setCaps(null));};
@@ -35,6 +42,7 @@ function App(){
  const go=(p:string)=>{setPage(p);setQuery('');setMenu(false);};
  const menuItems=account?.role==='superadmin'?[...navigation,['Аккаунты',Users] as const]:navigation;
  const [accounts,setAccounts]=useState<any[]>([]);
+ const [platform,setPlatform]=useState<any>(null);
  const [step,setStep]=useState(0);
  const create=(idea?:State['opportunities'][number])=>{setSelected(idea?.id??'');setModal('create');};
  const match=(s:string)=>s.toLowerCase().includes(query.toLowerCase());
@@ -96,15 +104,22 @@ function App(){
    <div className="mailbox-head"><b data-user-content>{m.email}</b>
     <span className={'badge '+(mr.ready?'active':'draft')}>{mr.ready?'Готов':'Не готов'}</span></div>
    <small>{providers[m.provider]??providers.unknown} · {connections[m.connection]}</small>
-   {m.testSend.status!=='none'&&<p className={'tiny '+(m.testSend.status==='ok'?'green-text':'')} data-user-content>{m.testSend.detail}</p>}
+   {m.transport&&<p className="tiny muted" data-user-content>{m.transport.label} · SMTP {m.transport.smtp.host}:{m.transport.smtp.port} · IMAP {m.transport.imap.host}:{m.transport.imap.port}</p>}
+   {m.connection!=='none'&&<div className="check-row">{checkLabels.map(([key,label])=>{
+     const value=(m as any)[key]?.status??'none';
+     return <span key={key} className={'check '+value} title={(m as any)[key]?.detail||''}>
+      {value==='ok'?<Check size={11}/>:value==='failed'?<X size={11}/>:<span className="check-dot"/>}{label}</span>;})}</div>}
    {mr.blockers.length>0&&<ul className="blockers">{mr.blockers.map(b=><li key={b}>{blockers[b]??b}</li>)}</ul>}
    <div className="mailbox-actions">
-    <button className="secondary small-button" disabled={busy||m.connection==='none'}
-     onClick={()=>run(async()=>{const r=await api('/mailboxes/test',{email:m.email});
-      setNotice(r.testSend.status==='ok'?'Тестовая отправка выполнена':'Тестовая отправка не прошла');})}>Тестовая отправка</button>
     {m.connection==='none'
-     ?<button className="secondary small-button" onClick={()=>{setDetection(null);setModal('connect');}}>Подключить</button>
-     :<button className="text-link" disabled={busy} onClick={()=>run(()=>api('/mailboxes/disconnect',{email:m.email}),'Ящик отключён')}>Отключить</button>}
+     ?<button className="secondary small-button" onClick={()=>{setDetection(null);setAdvanced(false);setModal('connect');}}>Подключить</button>
+     :<><button className="secondary small-button" disabled={busy}
+        onClick={()=>run(async()=>{const r=await api('/mailboxes/verify',{email:m.email});
+         setNotice(r.ready?'Ящик проверен и готов':'Проверка: '+Object.entries(r.checks??{}).map(([k,v]:any)=>k+' '+v.status).join(', '));})}>Проверить ящик</button>
+       <button className="secondary small-button" disabled={busy}
+        onClick={()=>run(async()=>{const r=await api('/mailboxes/sync',{email:m.email});
+         setNotice(`Принято ответов: ${r.added}, без совпадения: ${r.unmatched}`);})}>Принять ответы</button>
+       <button className="text-link" disabled={busy} onClick={()=>run(()=>api('/mailboxes/disconnect',{email:m.email}),'Ящик отключён')}>Отключить</button></>}
    </div></div>;})}</div>
   <div className="card-footer domain-foot">
    <button className="secondary" disabled={busy} onClick={()=>{setSelected(d.id);setModal('dns');}}><RefreshCw size={14}/>Проверить DNS</button>
@@ -113,7 +128,22 @@ function App(){
 
  {page==='Аккаунты'&&<><div className="info-banner"><ShieldCheck size={24}/><div><b>Кто может входить в Sendina</b>
    <p>Новый адрес получает доступ только после подтверждения. Рабочие области аккаунтов разделены: кампании и адресаты других аккаунтов отсюда не видны.</p></div>
-   <button className="secondary" disabled={busy} onClick={()=>run(async()=>setAccounts(await api('/accounts')))}><RefreshCw size={14}/>Обновить</button></div>
+   <button className="secondary" disabled={busy} onClick={()=>run(async()=>{setAccounts(await api('/accounts'));setPlatform(await api('/platform'));})}><RefreshCw size={14}/>Обновить</button></div>
+  <section className="card full-card">{header(Shield,'Приложения платформы',
+    <span className="subtle-tag">{platform?.google?.configured||platform?.microsoft?.configured?'Настроено':'Не настроено'}</span>)}
+   <div className="padded"><p className="muted">Это настройка администратора, а не пользователя. Заполните её один раз — и все аккаунты будут подключать Google и Microsoft одной кнопкой, без ввода client id.</p>
+    <p className="tiny muted">Адрес возврата для обоих провайдеров: <code>{(backendUrl()||location.origin)+'/oauth/mailbox/callback'}</code></p>
+    <p className="tiny muted">Шифрование секретов: {platform?.encryption==='environment'?'ключ из переменных окружения':'ключ создан сервером — задайте ENCRYPTION_KEY для более надёжного варианта'}</p>
+    <form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);
+      run(async()=>{await api('/platform',{google:{clientId:String(f.get('gid')||''),clientSecret:String(f.get('gsecret')||'')},
+        microsoft:{clientId:String(f.get('mid')||''),clientSecret:String(f.get('msecret')||''),tenant:String(f.get('mtenant')||'')}});
+       setPlatform(await api('/platform'));},'Приложения платформы сохранены');}}>
+     <div className="form-row"><label>Google client ID<input name="gid" placeholder={platform?.google?.configured?'Заполнено':''}/></label>
+      <label>Google client secret<input name="gsecret" type="password" placeholder={platform?.google?.configured?'Заполнено':''}/></label></div>
+     <div className="form-row"><label>Microsoft client ID<input name="mid" placeholder={platform?.microsoft?.configured?'Заполнено':''}/></label>
+      <label>Microsoft client secret<input name="msecret" type="password" placeholder={platform?.microsoft?.configured?'Заполнено':''}/></label></div>
+     <label>Тенант Microsoft<input name="mtenant" defaultValue={platform?.microsoft?.tenant??'common'}/></label>
+     <button disabled={busy}>Сохранить приложения</button></form></div></section>
   {!accounts.length?<div className="empty">Нажмите «Обновить», чтобы загрузить список аккаунтов.</div>
    :<section className="card full-card">{header(Users,'Аккаунты',<span className="subtle-tag">{accounts.length}</span>)}
     <div className="table-scroll"><table><thead><tr><th>Адрес</th><th>Роль</th><th>Состояние</th><th>Вход</th><th/></tr></thead>
@@ -130,7 +160,7 @@ function App(){
         onClick={()=>run(async()=>{await api('/accounts/decide',{id:a.id,status:'blocked'});setAccounts(await api('/accounts'));},'Доступ закрыт')}>Заблокировать</button>}
       </div></td></tr>)}</tbody></table></div></section>}</>}
 
- {page==='Ответы'&&<><div className="tabs">{[['all','Все ответы'],['positive','Положительные'],['neutral','Уточнения'],['negative','Отказы']].map(([key,label])=><button className={replyFilter===key?'tab active-tab':'tab'} key={key} onClick={()=>setReplyFilter(key)}>{label}</button>)}</div><div className="reply-list">{state.replies.filter(r=>(replyFilter==='all'||r.category===replyFilter)&&match(r.name+r.text+r.email)).map(r=><article className="card reply" key={r.id}><div className="reply-avatar" aria-hidden="true">{translate(r.name,locale)[0]}</div><div className="reply-content"><div className="reply-heading"><h3>{r.name} <span>{r.company}</span></h3><span className={'badge '+(r.category==='positive'?'active':'draft')}>{categories[r.category]}</span></div><small>{r.email} · {state.campaigns.find(c=>c.id===r.campaignId)?.name}</small><p data-user-content={!r.id.match(/^r[12]$/)}>{r.text}</p><div className="reply-actions"><span><CalendarDays size={14}/> {r.category==='positive'?'Следующий шаг: согласовать встречу':'Следующий шаг: изучить запрос'}</span><button className="text-link" onClick={()=>run(()=>api('/suppress',{email:r.email}),'Адресат исключён из всех кампаний')}>Исключить адресата</button></div></div></article>)}{!state.replies.filter(r=>(replyFilter==='all'||r.category===replyFilter)&&match(r.name+r.text+r.email)).length&&<div className="empty card">Ответов в этой категории пока нет.</div>}</div></>}
+ {page==='Ответы'&&<><div className="tabs">{[['all','Все ответы'],['positive','Положительные'],['neutral','Уточнения'],['negative','Отказы']].map(([key,label])=><button className={replyFilter===key?'tab active-tab':'tab'} key={key} onClick={()=>setReplyFilter(key)}>{label}</button>)}</div><div className="reply-list">{state.replies.filter(r=>(replyFilter==='all'||r.category===replyFilter)&&match(r.name+r.text+r.email)).map(r=><article className="card reply" key={r.id}><div className="reply-avatar" aria-hidden="true">{translate(r.name,locale)[0]}</div><div className="reply-content"><div className="reply-heading"><h3>{r.name} <span>{r.company}</span></h3><span className={'badge '+(r.category==='positive'?'active':'draft')}>{categories[r.category]}</span></div><small>{r.email} · {state.campaigns.find(c=>c.id===r.campaignId)?.name}{(r as any).source==='inbox'&&<> · принято из почтового ящика</>}</small><p data-user-content={!r.id.match(/^r[12]$/)}>{r.text}</p><div className="reply-actions"><span><CalendarDays size={14}/> {r.category==='positive'?'Следующий шаг: согласовать встречу':'Следующий шаг: изучить запрос'}</span><button className="text-link" onClick={()=>run(()=>api('/suppress',{email:r.email}),'Адресат исключён из всех кампаний')}>Исключить адресата</button></div></div></article>)}{!state.replies.filter(r=>(replyFilter==='all'||r.category===replyFilter)&&match(r.name+r.text+r.email)).length&&<div className="empty card">Ответов в этой категории пока нет.</div>}</div></>}
  {page==='Аналитика'&&<><div className="stats analytics-stats">{[['Отправлено',total],['Положительные ответы',positive],['Конверсия',`${total?(positive/total*100).toFixed(1):0}%`],['Ценность / 1 000 отправок',total?`${Math.round(value/total*1000)} $`:'—']].map(([label,n])=><article className="card metric" key={label}><span>{label}</span><h2>{n}</h2><small>Демонстрационные данные</small></article>)}</div><section className="card full-card">{header(ChartNoAxesColumnIncreasing,'Результаты по кампаниям')}{campaignTable()}<div className="card-note">Основная метрика ТЗ считается по безопасно доставленным письмам. Подтверждённых доставок пока нет; выше показан пример расчёта по отправкам.</div></section><section className="card full-card">{header(ChartNoAxesCombined,'Положительные ответы')}<div className="chart">{state.campaigns.map(c=><div key={c.id}><span>{c.name}</span><div className="chart-track"><i style={{width:Math.max(1,c.positive/Math.max(1,...state.campaigns.map(c=>c.positive))*100)+'%'}}/></div><b>{c.positive}</b></div>)}</div></section></>}
  {page==='Настройки'&&<div className="settings-grid"><section className="card setting">{header(Globe,'Сервер приложения')}<p>{browserDemo()?'Данные сохраняются только в этом браузере. Для общей рабочей области подключите сервер.':'Подключение к серверной рабочей области.'}</p><form onSubmit={e=>{e.preventDefault();run(async()=>{const url=serverDraft.trim().replace(/\/$/,'');if(url&&new URL(url).protocol!=='https:')throw Error('Укажите HTTPS-адрес сервера.');localStorage.setItem('sendina-api-url',url);await reload();},'Адрес сервера сохранён');}}><input aria-label="HTTPS-адрес сервера" type="url" placeholder="https://api.example.com" value={serverDraft} onChange={e=>setServerDraft(e.target.value)}/><button disabled={busy}>Сохранить</button></form><label className="backend-token">Токен доступа<input type="password" aria-label="Токен доступа" defaultValue={sessionStorage.getItem('token')??''} onChange={e=>sessionStorage.setItem('token',e.target.value)}/></label></section><section className="card setting">{header(Globe,'Язык интерфейса')}<p>Текст и данные пользователя сохраняются на исходном языке.</p><select aria-label="Язык интерфейса" value={locale} onChange={e=>setLocale(e.target.value as Locale)}><option value="ru">Русский</option><option value="en">Английский</option></select></section><section className="card setting">{header(Search,'Подключения аккаунта')}
   <p>Ключи модели, поиска и почтовых провайдеров хранятся в вашем аккаунте. Заполните их по шагам — сервер их не возвращает обратно.</p>
@@ -163,10 +193,10 @@ function App(){
    {key:'search',title:'Поиск адресатов',lead:'С поисковым ключом кандидаты ссылаются на настоящий результат. Без него они остаются неподтверждёнными и не проходят правила.',
     done:caps?.connections?.search?.configured,
     fields:[['searchProvider','Провайдер','select',''],['searchKey','Ключ поискового API','password','']]},
-   {key:'google',title:'Google Workspace',lead:'Создайте OAuth-приложение в Google Cloud Console со scope gmail.send и укажите адрес возврата ниже.',
+   {key:'google',title:'Google Workspace',lead:'Обычно это заполняет администратор Sendina один раз на всю платформу, и вам ничего вводить не нужно. Эти поля — запасной вариант: своё приложение Google Cloud Console со scope gmail.send и gmail.readonly.',
     done:caps?.connections?.google?.configured,
     fields:[['google.clientId','Client ID','text',''],['google.clientSecret','Client secret','password','']]},
-   {key:'microsoft',title:'Microsoft 365',lead:'Создайте приложение в Entra ID со scope Mail.Send и offline_access, затем укажите адрес возврата ниже.',
+   {key:'microsoft',title:'Microsoft 365',lead:'Тоже обычно настраивает администратор платформы. Запасной вариант — своё приложение Entra ID со scope Mail.Send, Mail.Read и offline_access.',
     done:caps?.connections?.microsoft?.configured,
     fields:[['microsoft.clientId','Client ID','text',''],['microsoft.clientSecret','Client secret','password',''],['microsoft.tenant','Идентификатор тенанта','text','common']]}];
   const current=steps[Math.min(step,steps.length-1)];
@@ -199,38 +229,57 @@ function App(){
  {modal==='connect'&&(!detection
   ?<form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);
     run(async()=>setDetection(await api('/mailboxes/detect',{email:f.get('email')})));}}>
-   <p className="muted">Введите адрес корпоративного ящика. Провайдер определяется по MX-записям домена — это ещё не подключение.</p>
+   <p className="muted">Введите адрес корпоративного ящика. Остальное Sendina определит сама по домену: это ещё не подключение.</p>
    <label>Адрес ящика<input name="email" type="email" required autoFocus placeholder="name@company.com"/></label>
-   <button disabled={busy}>Определить провайдера</button></form>
+   <button disabled={busy}>Продолжить</button></form>
   :<><div className="info-banner compact"><Info size={20}/><div>
     <b>{providers[detection.provider]??providers.unknown}</b>
     <p data-user-content>{detection.note}</p>
     {detection.mx?.length>0&&<p className="tiny" data-user-content>MX: {detection.mx.slice(0,3).join(', ')}</p>}</div></div>
    {detection.personal&&<div className="alert error" role="alert">Личный ящик. Рабочий сценарий — корпоративный домен организации; личный подходит только как тестовый случай.</div>}
+
    {detection.route==='oauth'&&<div className="button-stack">
     <button disabled={busy} onClick={()=>run(async()=>{const r=await api('/mailboxes/oauth',{email:detection.email});
-     window.open(r.url,'_blank','noopener');setModal('');setDetection(null);},'Завершите согласие в открывшейся вкладке, затем выполните тестовую отправку')}>
-     Подключить через {providers[detection.provider]}</button>
-    <button className="secondary" onClick={()=>setDetection({...detection,route:'smtp'})}>Вместо этого SMTP</button></div>}
-   {detection.route==='smtp'&&<div className="button-stack manual-choice">
-    <span className="tiny muted">Если домен закрыт почтовым шлюзом, укажите провайдера вручную:</span>
-    {(['google','microsoft'] as const).map(id=><button key={id} className="secondary small-button" disabled={busy}
-     onClick={()=>run(async()=>{const r=await api('/mailboxes/oauth',{email:detection.email,provider:id});
-      window.open(r.url,'_blank','noopener');setModal('');setDetection(null);},'Завершите согласие в открывшейся вкладке, затем выполните тестовую отправку')}>
-     {providers[id]}</button>)}</div>}
+     window.open(r.url,'_blank','noopener');setModal('');setDetection(null);},'Завершите согласие в открывшейся вкладке, затем проверьте ящик')}>
+     Подключить {providers[detection.provider]}</button>
+    <span className="tiny muted">{detection.appOwner==='platform'?'Приложение Sendina — client id вводить не нужно.':'Используется приложение вашего аккаунта.'}</span></div>}
+
    {detection.route==='oauth-unconfigured'&&<div className="alert error" role="alert">
-    OAuth для этого провайдера не настроен на сервере. Задайте client id и secret в переменных окружения либо подключите ящик по SMTP.</div>}
-   {(detection.route==='smtp'||detection.route==='oauth-unconfigured')&&
-    <form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);
-     run(async()=>{await api('/mailboxes/smtp',{email:detection.email,host:f.get('host'),port:Number(f.get('port')),
-      user:f.get('user'),pass:f.get('pass')});setModal('');setDetection(null);},'Ящик подключён. Выполните тестовую отправку.');}}>
-     <p className="muted">Пароль хранится на сервере отдельно от рабочей области и не возвращается в интерфейс.</p>
-     <div className="form-row"><label>Сервер SMTP<input name="host" required placeholder="smtp.company.com"/></label>
-      <label>Порт<input name="port" type="number" required defaultValue={587}/></label></div>
-     <label>Пользователь<input name="user" required defaultValue={detection.email}/></label>
-     <label>Пароль<input name="pass" type="password" required/></label>
-     <button disabled={busy}>Проверить и подключить</button></form>}
-   <button className="text-link" onClick={()=>setDetection(null)}>Другой адрес</button></>)}
+    Приложение {providers[detection.provider]} ещё не настроено. Это делает администратор Sendina один раз на всю платформу; до этого ящик можно подключить как обычный корпоративный.</div>}
+
+   {(detection.route==='auto'||detection.route==='manual'||detection.route==='oauth-unconfigured')&&(()=>{
+     const found=detection.settings;
+     const smtp=found?.smtp??{host:'',port:465,secure:true};
+     const imap=found?.imap??{host:'',port:993,secure:true};
+     const manual=advanced||!found;
+     return <form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);
+       const asServer=(prefix:string)=>({host:String(f.get(prefix+'Host')),port:Number(f.get(prefix+'Port')),secure:f.get(prefix+'Secure')==='on'});
+       run(async()=>{const r=await api('/mailboxes/connect',{email:detection.email,
+         smtp:asServer('smtp'),imap:asServer('imap'),user:String(f.get('user')||detection.email),
+         pass:f.get('pass'),source:found?.source??'manual',label:found?.label??'Указано вручную'});
+        setModal('');setDetection(null);setAdvanced(false);
+        setNotice(r.ready?'Ящик подключён и проверен':'Ящик подключён. Проверка: '+Object.entries(r.checks??{}).map(([k,v]:any)=>k+' '+v.status).join(', '));});}}>
+      {found&&!advanced
+       ?<div className="info-banner compact"><Check size={18}/><div><b data-user-content>{found.label}</b>
+          <p className="tiny" data-user-content>SMTP {smtp.host}:{smtp.port} · IMAP {imap.host}:{imap.port}</p>
+          <button type="button" className="text-link" onClick={()=>setAdvanced(true)}>Изменить вручную</button></div></div>
+       :<><p className="muted">Автоматически определить настройки не удалось. Их можно взять в панели вашего почтового провайдера.</p>
+         <div className="form-row"><label>SMTP host<input name="smtpHost" required defaultValue={smtp.host}/></label>
+          <label>SMTP порт<input name="smtpPort" type="number" required defaultValue={smtp.port}/></label></div>
+         <label className="switch"><input name="smtpSecure" type="checkbox" defaultChecked={smtp.secure}/>Шифрование TLS для SMTP</label>
+         <div className="form-row"><label>IMAP host<input name="imapHost" required defaultValue={imap.host}/></label>
+          <label>IMAP порт<input name="imapPort" type="number" required defaultValue={imap.port}/></label></div>
+         <label className="switch"><input name="imapSecure" type="checkbox" defaultChecked={imap.secure}/>Шифрование TLS для IMAP</label></>}
+      {found&&!advanced&&<><input type="hidden" name="smtpHost" value={smtp.host}/><input type="hidden" name="smtpPort" value={smtp.port}/>
+        {smtp.secure&&<input type="hidden" name="smtpSecure" value="on"/>}
+        <input type="hidden" name="imapHost" value={imap.host}/><input type="hidden" name="imapPort" value={imap.port}/>
+        {imap.secure&&<input type="hidden" name="imapSecure" value="on"/>}</>}
+      <label>Пользователь<input name="user" defaultValue={detection.email}/></label>
+      <label>Пароль или пароль приложения<input name="pass" type="password" required/></label>
+      <p className="tiny muted">Пароль шифруется на сервере и никогда не возвращается в интерфейс. После подключения Sendina проверит вход, отправку, приём и прочитает тестовое письмо обратно.</p>
+      <button disabled={busy}>Подключить и проверить</button></form>;
+    })()}
+   <button className="text-link" onClick={()=>{setDetection(null);setAdvanced(false);}}>Другой адрес</button></>)}
  {modal==='dns'&&<form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);run(async()=>{const c=await api(`/domains/${selected}/check`,{selector:f.get('selector')});setNotice(`SPF: ${c.spf?'найден':'не найден'} · DKIM: ${c.dkim?'найден':'не найден'} · DMARC: ${c.dmarc?'найден':'не найден'}`);setModal('');});}}><p>Домен: <b>{state.domains.find(d=>d.id===selected)?.name}</b></p><label>DKIM selector<input name="selector" defaultValue="default" pattern="[a-zA-Z0-9_-]{1,63}" required/></label><p className="muted">Уточните selector у почтового провайдера. Наличие записей не подтверждает возможность отправки.</p><button disabled={busy}>Проверить DNS</button></form>}
  {modal==='audit'&&<div className="audit-list">{state.audit.map(a=><div key={a.id}><span className="audit-dot"/><div><p>{a.action}</p><small>{new Date(a.at).toLocaleString(locale==='ru'?'ru-RU':'en-US')}</small></div></div>)}</div>}
  {modal==='idea'&&(()=>{const o=state.opportunities.find(o=>o.id===selected)!;return <><span className="badge draft">Демонстрационная гипотеза</span><h3>{o.name} · <Flag market={o.market}/>{o.market}</h3><p>{o.pain}. Предлагаемое решение: {translate(o.offer,locale).toLowerCase()}.</p><div className="info-banner compact"><Info size={20}/>Оценка {o.score}/100 и уверенность {o.confidence}% — иллюстрация. Источники исследования отсутствуют.</div><p>Первый тест: подготовить 20 проверенных адресатов, изучить основания контакта и оценить положительные ответы.</p><button onClick={()=>create(o)}>Подготовить кампанию<ArrowRight size={16}/></button></>;})()}
