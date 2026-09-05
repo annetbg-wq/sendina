@@ -1,7 +1,10 @@
 import {test,expect} from '@playwright/test';
 test('a protected workspace asks for a token in both languages and signs in',async({page})=>{
+ const denied:number[]=[];
+ page.on('response',r=>{if(r.url().includes('/api/state')&&r.status()===401)denied.push(1);});
  await page.goto('/');
  await expect(page.getByRole('heading',{name:'Вход в рабочую область'})).toBeVisible({timeout:15000});
+ expect(denied.length,'a rejected token must not be retried').toBe(1);
  await page.getByRole('button',{name:'Язык интерфейса'}).click();
  await expect(page.getByRole('heading',{name:'Sign in to your workspace'})).toBeVisible();
  expect((await page.locator('body').innerText()).match(/[А-Яа-яЁё]+/g),'Untranslated text on the sign-in screen').toBeNull();

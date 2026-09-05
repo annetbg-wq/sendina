@@ -17,7 +17,7 @@ function App(){
  useEffect(()=>{localStorage.setItem('sendina-locale',locale);document.documentElement.lang=locale;document.title=locale==='ru'?'Sendina — Монетизатор':'Sendina — Monetizer';},[locale]);
  const [state,setState]=useState<State|null>(null),[page,setPage]=useState('Главная'),[query,setQuery]=useState(''),[modal,setModal]=useState(''),[notice,setNotice]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[selected,setSelected]=useState(''),[preview,setPreview]=useState<any[]>([]),[replyFilter,setReplyFilter]=useState('all'),[menu,setMenu]=useState(false);
  const reload=async()=>setState(await api('/state'));
- useEffect(()=>{let active=true;const load=async()=>{for(let attempt=0;attempt<4;attempt++){try{await reload();return;}catch(e:any){if(attempt===3){if(active)setError(e.message);return;}await new Promise(r=>setTimeout(r,750));}}};void load();return()=>{active=false;};},[]);
+ useEffect(()=>{let active=true;const load=async()=>{for(let attempt=0;attempt<4;attempt++){try{await reload();return;}catch(e:any){if(attempt===3||e.status===401){if(active)setError(e.message);return;}await new Promise(r=>setTimeout(r,750));}}};void load();return()=>{active=false;};},[]);
  useEffect(()=>{if(!notice)return;const t=setTimeout(()=>setNotice(''),5000);return()=>clearTimeout(t);},[notice]);
  useEffect(()=>{const handler=(e:KeyboardEvent)=>{if(e.key==='Escape')setModal('');};window.addEventListener('keydown',handler);return()=>window.removeEventListener('keydown',handler);},[]);
  const run=async(fn:()=>Promise<unknown>,message?:string)=>{setBusy(true);setError('');try{await fn();await reload();if(message)setNotice(message);}catch(e:any){setError(e.message);}finally{setBusy(false);}};

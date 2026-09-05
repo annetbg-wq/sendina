@@ -7,5 +7,5 @@ export async function api(path:string,body?:unknown){
  const base=backendUrl();
  const r=await fetch(base+'/api'+path,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json',...(sessionStorage.getItem('token')?{Authorization:`Bearer ${sessionStorage.getItem('token')}`}:{})},body:body===undefined?undefined:JSON.stringify(body)});
  if(!r.headers.get('content-type')?.includes('application/json'))throw Error('Сервер недоступен. Проверьте адрес подключения.');
- const data=await r.json();if(!r.ok)throw Error(data.error??'Ошибка запроса');return data;
+ const data=await r.json();if(!r.ok){const error=Object.assign(Error(data.error??'Ошибка запроса'),{status:r.status});throw error;}return data;
 }
