@@ -1,4 +1,4 @@
-import {seed,type State} from '../server/seed';
+import {seed,noDns,box,type State} from '../server/seed';
 import {policy} from '../server/policy';
 import {z} from 'zod';
 const key='sendina-demo-v1';
@@ -14,7 +14,8 @@ if(path==='/integrations')return {mcp:{endpoint:'Not configured',authentication:
   result={...c,id:crypto.randomUUID(),status:'draft',sent:0,positive:0,value:0};s.campaigns.unshift(result);log(`Создана кампания «${c.name}»`);
  }else if(path==='/domains'){
   const email=z.email().parse(body.email).toLowerCase(),name=email.split('@')[1];let d=s.domains.find(d=>d.name===name);
-  if(d){if(!d.mailboxes.includes(email))d.mailboxes.push(email);}else{s.domains.push(d={id:crypto.randomUUID(),name,verified:false,limit:0,used:0,mailboxes:[email]});}result=d;log(`Добавлен ящик ${email}`);
+  if(!d)s.domains.push(d={id:crypto.randomUUID(),name,limit:0,used:0,dns:noDns(),mailboxes:[]});
+  if(!d.mailboxes.some(m=>m.email===email))d.mailboxes.push(box(email));result=d;log(`Добавлен ящик ${email}`);
  }else if(path==='/stop'){
   s.stopped=z.boolean().parse(body.stopped);if(s.stopped)s.campaigns.forEach(c=>{if(c.status==='active')c.status='paused';});log(s.stopped?'Аварийная остановка всех кампаний':'Аварийная остановка снята. Кампании остаются на паузе.');
  }else if(path==='/suppress'){
@@ -22,6 +23,7 @@ if(path==='/integrations')return {mcp:{endpoint:'Not configured',authentication:
  }else if(path.match(/^\/domains\/[^/]+\/check$/))throw Error('Для проверки DNS подключите сервер в настройках.');
  else if(path.match(/^\/campaigns\/[^/]+\/find$/))throw Error('Для поиска адресатов подключите сервер в настройках.');
  else if(path==='/contacts/confirm')throw Error('Для подтверждения адресата подключите сервер в настройках.');
+ else if(path.startsWith('/mailboxes/'))throw Error('Для подключения ящика подключите сервер в настройках.');
  else if(path==='/settings/recipients'){const mode=z.enum(['auto','search','proposal']).parse(body.mode);s.settings={...s.settings,recipientMode:mode};result={mode,effective:'proposal'};log(`Режим поиска адресатов: ${mode}`);}
  else {
   const match=path.match(/^\/campaigns\/([^/]+)\/(status|contacts|preview)$/);if(!match)throw Error('Для этого действия подключите сервер в настройках.');

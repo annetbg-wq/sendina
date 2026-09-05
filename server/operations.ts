@@ -6,7 +6,8 @@ import {policy,isBulk} from './policy';
 import {findRecipients,resolveMode} from './recipients';
 import {aiReady,aiModel} from './ai';
 import {searchReady,searchProvider} from './search';
-import type {State} from './seed';
+import {noDns,box,type State} from './seed';
+import {domainReadiness,mailboxReadiness} from './readiness';
 
 const audit=(s:State,action:string)=>s.audit.unshift({id:randomUUID(),at:new Date().toISOString(),action});
 const campaignOf=(s:State,id:string)=>{const c=s.campaigns.find(c=>c.id===id);if(!c)throw Error('Кампания не найдена');return c;};
@@ -20,13 +21,16 @@ export function duplicateEmails(s:State,campaignId:string){
  return [...new Set([...mine.filter(c=>elsewhere.has(c.email)).map(c=>c.email),...repeated])];
 }
 
-const decide=(s:State,c:any,p:any,duplicates:string[])=>policy({
+/** The first domain that is genuinely ready to send: connected, test sent and DNS in place. */
+const senderDomain=(s:State)=>s.domains.find(d=>domainReadiness(d,s.stopped).ready)??null;
+
+const decide=(s:State,c:any,p:any,duplicates:string[],sender:any)=>policy({
  stopped:s.stopped,status:c.status,suppressed:s.suppressed.includes(p.email),
  replied:s.replies.some(r=>r.email===p.email&&r.campaignId===c.id),
  basis:p.basis??'',contactReason:p.reason??'',
  sourceVerified:p.verification==='verified',
  duplicate:duplicates.includes(p.email),
- verified:false,used:0,limit:0
+ verified:Boolean(sender),used:sender?.used??0,limit:sender?.limit??0
 });
 
 /** A recipient with no specific reason gets bulk wording and is named as such. */
@@ -94,17 +98,21 @@ export const operations={
 
  addMailbox:(input:unknown)=>{const email=schemas.mailbox.parse(input).email.toLowerCase();
   return change(s=>{const name=email.split('@')[1];let d=s.domains.find(d=>d.name===name);
-   if(d){if(!d.mailboxes.includes(email))d.mailboxes.push(email);}
-   else s.domains.push(d={id:randomUUID(),name,verified:false,limit:0,used:0,mailboxes:[email]});
-   audit(s,`Добавлен ящик ${email}. Требуется проверка DNS и почтового провайдера.`);return d;});},
+   if(!d)s.domains.push(d={id:randomUUID(),name,limit:0,used:0,dns:noDns(),mailboxes:[]});
+   if(!d.mailboxes.some(m=>m.email===email))d.mailboxes.push(box(email));
+   audit(s,`Добавлен ящик ${email}. Ящик не подключён: нужны подключение провайдера и тестовая отправка.`);
+   return {...d,readiness:domainReadiness(d,s.stopped)};});},
 
  checkDomain:async(input:unknown)=>{const {id,selector}=schemas.domainCheck.parse(input);
   const d=(await read()).domains.find(d=>d.id===id);if(!d)throw Error('Домен не найден');
   const lookup=async(n:string)=>{try{return (await resolveTxt(n)).map(r=>r.join(''));}catch{return [];}};
   const [spf,dkim,dmarc]=await Promise.all([lookup(d.name),lookup(`${selector}._domainkey.${d.name}`),lookup(`_dmarc.${d.name}`)]);
   const checks={spf:spf.some(v=>v.startsWith('v=spf1')),dkim:dkim.some(v=>v.includes('p=')&&!v.endsWith('p=')),dmarc:dmarc.some(v=>v.startsWith('v=DMARC1'))};
-  await change(s=>audit(s,`DNS ${d.name}: SPF ${checks.spf}, DKIM ${checks.dkim}, DMARC ${checks.dmarc}. Проверка отправителя провайдером ещё требуется.`));
-  return checks;},
+  // A DNS record is evidence about the domain. It is never a connection and never grants readiness.
+  return change(s=>{const target=s.domains.find(x=>x.id===id)!;
+   target.dns={...checks,checkedAt:new Date().toISOString()};
+   audit(s,`DNS ${d.name}: SPF ${checks.spf}, DKIM ${checks.dkim}, DMARC ${checks.dmarc}. Это не подключение ящика.`);
+   return {...checks,readiness:domainReadiness(target,s.stopped)};});},
 
  /** Manual JSON import stays available as a secondary route to the same store. */
  importContacts:(input:unknown)=>{const {id,contacts}=schemas.importContacts.parse(input);
@@ -143,6 +151,7 @@ export const operations={
  /** Prepares drafts and a policy decision per recipient. Repeating it never duplicates a draft. */
  prepareMessages:(input:unknown)=>{const {id,limit}=schemas.prepare.parse(input);
   return change(s=>{const c=campaignOf(s,id);const duplicates=duplicateEmails(s,id);
+   const sender=senderDomain(s);
    const contacts=s.contacts.filter(p=>p.campaignId===id).slice(0,limit);
    return contacts.map(p=>{const draft=compose(c,p);
     let m=s.messages.find(m=>m.contactId===p.id);
@@ -150,7 +159,7 @@ export const operations={
     else Object.assign(m,{subject:draft.subject,text:draft.text,bulk:draft.bulk});
     return {...m,name:p.name,company:p.company,source:p.source,reason:p.reason,evidence:p.evidence,
      verification:p.verification,confidence:p.confidence,origin:p.origin,
-     policy:decide(s,c,p,duplicates)};});});},
+     sender:sender?.name??'',policy:decide(s,c,p,duplicates,sender)};});});},
 
  recordReply:(input:unknown)=>{const body=schemas.reply.parse(input);
   return change(s=>{const existing=s.replies.find(r=>r.id===body.eventId);if(existing)return existing;

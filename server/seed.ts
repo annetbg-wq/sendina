@@ -1,3 +1,9 @@
+export const noDns=()=>({spf:false,dkim:false,dmarc:false,checkedAt:null as string|null});
+/** A mailbox starts unconnected. Only a successful test send can change that. */
+export const box=(email:string)=>({email,provider:'unknown' as string,workspace:true,personal:false,
+  connection:'none' as string,connectedAt:null as string|null,
+  testSend:{status:'none' as string,at:null as string|null,detail:''}});
+
 export const seed = () => ({
   demo:true, stopped:false,
   settings:{recipientMode:'auto' as 'auto'|'search'|'proposal'},
@@ -6,7 +12,10 @@ export const seed = () => ({
     {id:'c2',name:'Поиск партнёров для внедрения',market:'Великобритания',goal:'Партнёрство',context:'Совместное внедрение решений',event:'Положительный ответ',status:'active',sent:325,positive:13,value:1300},
     {id:'c3',name:'Решение официального запроса',market:'ОАЭ',goal:'Обращение',context:'Получение документов',event:'Получение документа',status:'paused',sent:218,positive:7,value:0}
   ],
-  domains:[{id:'d1',name:'hotelflow.example',verified:false,limit:180,used:112,mailboxes:['outreach@hotelflow.example','partners@hotelflow.example']},{id:'d2',name:'stayali.example',verified:false,limit:120,used:48,mailboxes:['sales@stayali.example','contact@stayali.example']}],
+  domains:[
+    {id:'d1',name:'hotelflow.example',limit:180,used:112,dns:noDns(),mailboxes:[box('outreach@hotelflow.example'),box('partners@hotelflow.example')]},
+    {id:'d2',name:'stayali.example',limit:120,used:48,dns:noDns(),mailboxes:[box('sales@stayali.example'),box('contact@stayali.example')]}
+  ],
   opportunities:[
     {id:'o1',name:'Отели и гостиницы',market:'США',score:92,trend:8,price:2500,pain:'Ручная обработка запросов гостей',offer:'Автоматизация ответов и бронирований',confidence:78},
     {id:'o2',name:'Помощник по доходу для гостиниц',market:'Германия',score:86,trend:5,price:1800,pain:'Потери выручки при изменении спроса',offer:'Рекомендации по управлению тарифами',confidence:71},
@@ -18,4 +27,14 @@ export const seed = () => ({
   replies:[{id:'r1',campaignId:'c1',email:'anna@hotel.example',name:'Анна Мартин',company:'The Garden Hotel',text:'Добрый день! Интересное предложение. Можем обсудить на встрече на следующей неделе?',category:'positive',at:'2026-09-05T09:30:00Z'},{id:'r2',campaignId:'c2',email:'mark@agency.example',name:'Марк Уилсон',company:'North Partners',text:'Спасибо. Пришлите, пожалуйста, подробности о партнёрской программе.',category:'neutral',at:'2026-09-05T08:15:00Z'}],
   audit:[{id:'a1',at:new Date().toISOString(),action:'Создана демонстрационная рабочая область. Показатели и гипотезы — примеры.'}]
 });
+/** Older stored workspaces kept mailboxes as plain strings and no DNS block. */
+export function normalize(s:any){
+  s.settings??={recipientMode:'auto'};
+  for(const d of s.domains??[]){
+    d.dns??=noDns();
+    d.mailboxes=(d.mailboxes??[]).map((m:any)=>typeof m==='string'?box(m):{...box(m.email),...m});
+    delete d.verified;
+  }
+  return s;
+}
 export type State = ReturnType<typeof seed>;

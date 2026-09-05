@@ -377,6 +377,51 @@ Sendina · ваш путь от идеи к результату|Sendina · from
 Для подтверждения адресата подключите сервер в настройках.|Connect a server in Settings to confirm a recipient.
 Адрес|Address
 Источник|Source
+Ящик готов только после тестовой отправки|A mailbox is ready only after a test send
+Проверка DNS показывает записи домена, но подключением не считается. Статус «готов» появляется после подключения провайдера, успешной тестовой отправки и выполнения правил.|A DNS check reports the domain records but never counts as a connection. Ready appears only after the provider is connected, a test send succeeds and the rules pass.
+Подключить ящик|Connect a mailbox
+Подключение ящика|Mailbox connection
+Готов к отправке|Ready to send
+Не готов|Not ready
+Готов|Ready
+Тестовая отправка|Test send
+Подключить|Connect
+Отключить|Disconnect
+Проверить DNS|Check DNS
+DNS не проверялся|DNS not checked
+Провайдер не определён|Provider not identified
+не подключён|not connected
+подключён по OAuth|connected over OAuth
+подключён по SMTP|connected over SMTP
+Ящик не подключён|Mailbox not connected
+Нужна тестовая отправка|A test send is required
+Тестовая отправка не прошла|The test send failed
+Нет записи SPF|No SPF record
+Нет записи DKIM|No DKIM record
+Нет записи DMARC|No DMARC record
+Нет ящиков|No mailboxes
+Введите адрес корпоративного ящика. Провайдер определяется по MX-записям домена — это ещё не подключение.|Enter a corporate mailbox address. The provider is identified from the domain MX records, which is not yet a connection.
+Адрес ящика|Mailbox address
+Определить провайдера|Identify the provider
+Личный ящик. Рабочий сценарий — корпоративный домен организации; личный подходит только как тестовый случай.|A personal mailbox. The working scenario is an organisation domain; a personal one only suits a test case.
+Подключить через|Connect with
+Вместо этого SMTP|Use SMTP instead
+OAuth для этого провайдера не настроен на сервере. Задайте client id и secret в переменных окружения либо подключите ящик по SMTP.|OAuth for this provider is not configured on the server. Set a client id and secret in the environment, or connect the mailbox over SMTP.
+Пароль хранится на сервере отдельно от рабочей области и не возвращается в интерфейс.|The password is stored on the server apart from the workspace and never returned to the interface.
+Сервер SMTP|SMTP server
+Порт|Port
+Пользователь|User
+Пароль|Password
+Проверить и подключить|Verify and connect
+Другой адрес|A different address
+Если домен закрыт почтовым шлюзом, укажите провайдера вручную:|If a mail gateway fronts the domain, name the provider yourself:
+Завершите согласие в открывшейся вкладке, затем выполните тестовую отправку|Finish the consent in the new tab, then run a test send
+Тестовая отправка выполнена|The test send succeeded
+Ящик подключён. Выполните тестовую отправку.|Mailbox connected. Run a test send.
+Ящик отключён|Mailbox disconnected
+есть|yes
+нет|no
+Для подключения ящика подключите сервер в настройках.|Connect a server in Settings to connect a mailbox.
 `;
 export const dictionary:Record<string,string>=Object.fromEntries(pairs.trim().split('\n').map(line=>line.split('|')));
 const ordered=Object.keys(dictionary).filter(k=>/[А-Яа-яЁё]/.test(k)).sort((a,b)=>b.length-a.length);

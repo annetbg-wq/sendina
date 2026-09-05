@@ -5,6 +5,7 @@ import {createRemoteJWKSet,jwtVerify} from 'jose';
 import {z} from 'zod';
 import {timingSafeEqual} from 'node:crypto';
 import {operations} from './operations';
+import {mailboxOperations} from './mailboxes';
 import {oauthEnabled,publicUrl,resourceUrl,verifyLocalToken} from './oauth';
 
 /** MCP tools call the same operations layer as the UI, in process. Nothing goes back over HTTP. */
@@ -13,7 +14,7 @@ export function mountMcp(app:Express){
  const jwks=process.env.OAUTH_JWKS_URL?createRemoteJWKSet(new URL(process.env.OAUTH_JWKS_URL)):null;
  const authorizationServers=()=>oauthEnabled()?[publicUrl()]:issuer?[issuer]:[];
  const method=()=>oauthEnabled()?'OAuth 2.1':issuer&&jwks?'OAuth 2.1 (внешний провайдер)':process.env.MCP_TOKEN?'Токен разработчика':'Не настроено';
- const tools=['get_capabilities','get_dashboard','list_campaigns','get_campaign','create_campaign','find_recipients','import_contacts','confirm_recipient','prepare_messages','set_campaign_status','record_reply','exclude_recipient','emergency_stop','list_opportunities'];
+ const tools=['get_capabilities','get_dashboard','list_campaigns','get_campaign','create_campaign','find_recipients','import_contacts','confirm_recipient','prepare_messages','set_campaign_status','record_reply','exclude_recipient','emergency_stop','list_opportunities','list_mailboxes','test_mailbox'];
 
  app.get(['/.well-known/oauth-protected-resource','/.well-known/oauth-protected-resource/mcp'],(_req,res)=>
   res.json({resource:resourceUrl(),authorization_servers:authorizationServers(),scopes_supported:['sendina:read','sendina:write'],bearer_methods_supported:['header'],resource_name:'Sendina'}));
@@ -72,6 +73,9 @@ export function mountMcp(app:Express){
    {campaignId:z.string(),email:z.email(),text:z.string().min(1),eventId:z.string(),
     category:z.enum(['positive','neutral','objection','referral','later','unsubscribe','negative','automatic','bounce'])},true,true,a=>operations.recordReply(a));
   register('exclude_recipient','Globally exclude a recipient across all campaigns.',{email:z.email()},true,true,a=>operations.suppress(a));
+  register('list_mailboxes','Sending readiness of every domain and mailbox, with what is still missing.',{},false,true,()=>mailboxOperations.status());
+  register('test_mailbox','Send one real test message through a connected mailbox. Readiness depends on it.',
+   {email:z.email(),to:z.email().optional()},true,false,a=>mailboxOperations.testSend(a));
   register('emergency_stop','Stop all campaigns or lift the stop. Lifting does not resume campaigns.',{stopped:z.boolean()},true,true,a=>operations.emergencyStop(a));
 
   const transport=new StreamableHTTPServerTransport({sessionIdGenerator:undefined,enableJsonResponse:true});

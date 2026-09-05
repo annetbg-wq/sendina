@@ -30,7 +30,7 @@ test('every dialog is fully translated in English',async({page})=>{
  await nav('Campaigns');
  await page.getByRole('button',{name:'Create campaign',exact:true}).click();await check('new campaign');
  await nav('Domains & mailboxes');
- await page.getByRole('button',{name:'Add mailbox'}).click();await check('new mailbox');
+ await page.getByRole('button',{name:'Connect a mailbox'}).click();await check('mailbox connection');
  await page.getByRole('button',{name:'Check DNS'}).first().click();await check('DNS check');
  await nav('Opportunities');
  await page.getByRole('button',{name:'Reasoning'}).first().click();await check('opportunity');
