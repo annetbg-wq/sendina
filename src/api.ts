@@ -1,5 +1,6 @@
 import {demoApi} from './demo-api';
-export const backendUrl=()=>localStorage.getItem('sendina-api-url')||import.meta.env.VITE_API_URL||'';
+/** A saved value wins over the build-time URL, and an empty one selects the browser demo. */
+export const backendUrl=()=>{const saved=localStorage.getItem('sendina-api-url');return saved!==null?saved:(import.meta.env.VITE_API_URL||'');};
 export const browserDemo=()=>import.meta.env.PROD&&!backendUrl();
 export async function api(path:string,body?:unknown){
  if(browserDemo())return demoApi(path,body);

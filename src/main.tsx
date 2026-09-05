@@ -13,6 +13,7 @@ function App(){
  const [locale,setLocale]=useState<Locale>(()=>localStorage.getItem('sendina-locale')==='en'?'en':'ru');
  const [integration,setIntegration]=useState<any>(null);
  const [serverDraft,setServerDraft]=useState(backendUrl());
+ const [token,setToken]=useState(()=>sessionStorage.getItem('token')??'');
  useEffect(()=>{localStorage.setItem('sendina-locale',locale);document.documentElement.lang=locale;document.title=locale==='ru'?'Sendina — Монетизатор':'Sendina — Monetizer';},[locale]);
  const [state,setState]=useState<State|null>(null),[page,setPage]=useState('Главная'),[query,setQuery]=useState(''),[modal,setModal]=useState(''),[notice,setNotice]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[selected,setSelected]=useState(''),[preview,setPreview]=useState<any[]>([]),[replyFilter,setReplyFilter]=useState('all'),[menu,setMenu]=useState(false);
  const reload=async()=>setState(await api('/state'));
@@ -23,7 +24,18 @@ function App(){
  const go=(p:string)=>{setPage(p);setQuery('');setMenu(false);};
  const create=(idea?:State['opportunities'][number])=>{setSelected(idea?.id??'');setModal('create');};
  const match=(s:string)=>s.toLowerCase().includes(query.toLowerCase());
- if(!state)return localize(<div className="loading"><ChartNoAxesCombined size={42}/><h2>Sendina</h2><p>{error||'Загружаем рабочую область…'}</p>{error&&<><input aria-label="Токен доступа" type="password" placeholder="Токен доступа" onChange={e=>sessionStorage.setItem('token',e.target.value)}/><button onClick={()=>reload().catch(e=>setError(e.message))}>Повторить</button></>}</div>,locale);
+ if(!state)return localize(<div className="gate"><div className="gate-card">
+ <div className="gate-brand"><ChartNoAxesCombined size={29}/><span>Монетизатор<span className="brand-sub">by sendina</span></span></div>
+ {error?<><h2>Вход в рабочую область</h2><p>Рабочая область защищена токеном доступа. Введите токен, который задан на сервере.</p>
+  <div className="alert error" role="alert">{error}</div>
+  <form onSubmit={e=>{e.preventDefault();setError('');setState(null);reload().catch(err=>setError(err.message));}}>
+   <label>Токен доступа<input type="password" autoFocus value={token} onChange={e=>{setToken(e.target.value);sessionStorage.setItem('token',e.target.value);}}/></label>
+   <button className="wide" disabled={!token}>Войти</button></form></>
+ :<><h2>Загружаем рабочую область…</h2><div className="gate-bar"><i/></div></>}
+ <div className="gate-foot">
+  <button className="text-link" onClick={()=>{localStorage.setItem('sendina-api-url','');location.reload();}}>Посмотреть демонстрацию<ArrowRight size={12}/></button>
+  <button className="text-link" aria-label="Язык интерфейса" onClick={()=>setLocale(locale==='ru'?'en':'ru')}><Globe size={13}/>{locale.toUpperCase()}</button></div>
+</div></div>,locale);
  const campaigns=state.campaigns.filter(c=>match(c.name+' '+c.market)),ideas=state.opportunities.filter(o=>match(o.name+' '+o.market));
  const total=state.campaigns.reduce((a,c)=>a+c.sent,0),positive=state.campaigns.reduce((a,c)=>a+c.positive,0),value=state.campaigns.reduce((a,c)=>a+c.value,0);
  const link=(label:string,target:string)=><button className="text-link" onClick={()=>go(target)}>{label}<ArrowRight size={14}/></button>;

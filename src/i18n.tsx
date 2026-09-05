@@ -257,6 +257,10 @@ Sendina · ваш путь от идеи к результату|Sendina · from
 Все кампании приостановлены|All campaigns paused
 Ящик добавлен. Необходима проверка домена.|Mailbox added. Domain verification is required.
 Загружаем рабочую область…|Loading your workspace…
+Вход в рабочую область|Sign in to your workspace
+Рабочая область защищена токеном доступа. Введите токен, который задан на сервере.|This workspace is protected by an access token. Enter the token configured on the server.
+Войти|Sign in
+Посмотреть демонстрацию|View the demo
 Токен доступа|Access token
 Повторить|Retry
 Ошибка запроса|Request failed
