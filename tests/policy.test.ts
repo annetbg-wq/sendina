@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {policy,isBulk} from '../server/policy';
-import {bindAddress,publicAddress} from '../server/config';
+import {bindAddress,publicAddress,resourceAddress} from '../server/config';
 const valid={stopped:false,status:'active',suppressed:false,replied:false,basis:'documented consent',contactReason:'They published a request for this integration',sourceVerified:true,duplicate:false,verified:true,used:10,limit:100};
 test('emergency stop overrides all other decisions',()=>assert.equal(policy({...valid,stopped:true}).reason,'EMERGENCY_STOP'));
 test('global exclusions block recipients across campaigns',()=>assert.equal(policy({...valid,suppressed:true}).reason,'GLOBAL_SUPPRESSION'));
@@ -27,4 +27,12 @@ test('a deployment finds its own public address', () => {
   assert.equal(publicAddress({MCP_RESOURCE_URL: 'https://example.com/mcp'}), 'https://example.com');
   assert.equal(publicAddress({RAILWAY_PUBLIC_DOMAIN: 'sendina-production.up.railway.app'}), 'https://sendina-production.up.railway.app');
   assert.equal(publicAddress({PORT: '8080'}), 'http://127.0.0.1:8080');
+});
+
+test('a leftover loopback address never overrides the published domain', () => {
+  const railway = {RAILWAY_PUBLIC_DOMAIN: 'sendina-production.up.railway.app', MCP_RESOURCE_URL: 'http://127.0.0.1:3001/mcp', PORT: '8080'};
+  assert.equal(publicAddress(railway), 'https://sendina-production.up.railway.app');
+  assert.equal(resourceAddress(railway), 'https://sendina-production.up.railway.app/mcp');
+  assert.equal(resourceAddress({PUBLIC_URL: 'https://example.com', MCP_RESOURCE_URL: 'https://example.com/custom-mcp'}), 'https://example.com/custom-mcp');
+  assert.equal(resourceAddress({MCP_RESOURCE_URL: 'http://127.0.0.1:3001/mcp'}), 'http://127.0.0.1:3001/mcp');
 });

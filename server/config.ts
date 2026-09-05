@@ -6,9 +6,24 @@ export function bindAddress(env:Record<string,string|undefined>){
  return {host,port:Number(env.PORT??3001),loopback};
 }
 
-/** Where this deployment is reachable. Railway publishes its own domain, so it needs no manual address. */
+/** True for an address that only the container itself can reach. */
+const loopback=(url:string)=>{try{const h=new URL(url).hostname;return h==='127.0.0.1'||h==='localhost'||h==='::1';}catch{return false;}};
+/** Where this deployment is reachable. Railway publishes its own domain, so it needs no manual address.
+    A hand-set loopback address is a leftover, not an intent, once the platform has published a domain. */
 export function publicAddress(env:Record<string,string|undefined>){
- const fromResource=env.MCP_RESOURCE_URL?.replace(/\/mcp\/?$/,'');
- const fromRailway=env.RAILWAY_PUBLIC_DOMAIN?`https://${env.RAILWAY_PUBLIC_DOMAIN}`:undefined;
- return (env.PUBLIC_URL||fromResource||fromRailway||`http://127.0.0.1:${env.PORT??3001}`).replace(/\/$/,'');
+ const published=env.RAILWAY_PUBLIC_DOMAIN?`https://${env.RAILWAY_PUBLIC_DOMAIN}`:undefined;
+ const candidates=[env.PUBLIC_URL,env.MCP_RESOURCE_URL?.replace(/\/mcp\/?$/,''),published,`http://127.0.0.1:${env.PORT??3001}`];
+ for(const candidate of candidates){
+  if(!candidate)continue;
+  if(published&&loopback(candidate))continue;
+  return candidate.replace(/\/$/,'');
+ }
+ return `http://127.0.0.1:${env.PORT??3001}`;
+}
+/** The MCP endpoint. A configured value is honoured only if it lives at the public address. */
+export function resourceAddress(env:Record<string,string|undefined>){
+ const base=publicAddress(env);
+ const configured=env.MCP_RESOURCE_URL;
+ try{if(configured&&new URL(configured).origin===new URL(base).origin)return configured;}catch{}
+ return `${base}/mcp`;
 }

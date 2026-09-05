@@ -3,11 +3,11 @@ import express from 'express';
 import {randomUUID,randomBytes,createHash,timingSafeEqual} from 'node:crypto';
 import {generateKeyPair,exportPKCS8,exportJWK,importPKCS8,importJWK,SignJWT,jwtVerify,type CryptoKey,type JWTPayload} from 'jose';
 import {getAuth,setAuth} from './authstore';
-import {publicAddress} from './config';
+import {publicAddress,resourceAddress} from './config';
 
 /** Built-in OAuth 2.1 authorization server: PKCE, dynamic client registration, signed access tokens. */
 export const publicUrl=()=>publicAddress(process.env);
-export const resourceUrl=()=>process.env.MCP_RESOURCE_URL??`${publicUrl()}/mcp`;
+export const resourceUrl=()=>resourceAddress(process.env);
 /** An external issuer wins; otherwise the built-in server runs whenever an operator token exists. */
 export const oauthEnabled=()=>!process.env.OAUTH_ISSUER&&Boolean(process.env.APP_TOKEN);
 export const oauthSubject=()=>process.env.MCP_SUBJECT??'sendina-workspace';
