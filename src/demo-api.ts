@@ -7,7 +7,7 @@ export async function demoApi(path:string,body?:any){
  const log=(action:string)=>s.audit.unshift({id:crypto.randomUUID(),at:new Date().toISOString(),action});
  let result:any={ok:true};
  if(path==='/state')return s;
- if(path==='/capabilities')return {ai:{ready:false,model:''},search:{ready:false,provider:''},recipients:{setting:s.settings?.recipientMode??'auto',effective:'proposal'},sendingEnabled:false};
+ if(path==='/capabilities')return {ai:{ready:false,model:''},search:{ready:false,provider:''},recipients:{setting:s.settings?.recipientMode??'auto',effective:'proposal'},storage:{postgres:false,durable:false},sendingEnabled:false};
 if(path==='/integrations')return {mcp:{endpoint:'Not configured',authentication:'Not configured',ready:false,transport:'Streamable HTTP',tools:['get_dashboard','list_campaigns','list_opportunities','get_campaign','create_campaign','import_contacts','preview_campaign','set_campaign_status','emergency_stop','exclude_recipient']}};
  if(path==='/campaigns'){
   const c=z.object({name:z.string().min(3).max(150),market:z.string().min(1),goal:z.string().min(1),context:z.string().min(10).max(5000),event:z.string().min(1)}).parse(body);

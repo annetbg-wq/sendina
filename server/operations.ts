@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {resolveTxt} from 'node:dns/promises';
 import {z} from 'zod';
-import {read,change} from './store';
+import {read,change,pool} from './store';
 import {policy,isBulk} from './policy';
 import {findRecipients,resolveMode} from './recipients';
 import {aiReady,aiModel} from './ai';
@@ -60,6 +60,7 @@ export const operations={
   ai:{ready:aiReady(),model:aiReady()?aiModel():''},
   search:{ready:searchReady(),provider:searchProvider()},
   recipients:{setting,effective:resolveMode(setting)},
+  storage:{postgres:Boolean(pool),durable:Boolean(pool)},
   sendingEnabled:false};},
 
  dashboard:async()=>{const s=await read();return {demo:s.demo,stopped:s.stopped,campaigns:s.campaigns.length,

@@ -371,6 +371,7 @@ Sendina · ваш путь от идеи к результату|Sendina · from
 не подключена|not connected
 не подключён|not connected
 Режим сохранён|Mode saved
+Хранилище: файл контейнера. Подключите PostgreSQL, иначе данные пропадут при передеплое.|Storage: a container file. Connect PostgreSQL or the data will be lost on the next deployment.
 Поиск адресатов и подготовка писем работают через подключённую модель. SMTP и автоматический приём писем ещё не подключены, отправка отключена.|Recipient research and message preparation run through the connected model. SMTP and automatic reply intake are not connected yet, and sending is disabled.
 Для поиска адресатов подключите сервер в настройках.|Connect a server in Settings to find recipients.
 Для подтверждения адресата подключите сервер в настройках.|Connect a server in Settings to confirm a recipient.
