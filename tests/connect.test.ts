@@ -98,7 +98,8 @@ test('a mailbox becomes ready only after every proof, and a DNS check grants not
   assert.equal(authorize.searchParams.get('client_id'),'platform-client','the platform application is used');
   assert.match(authorize.searchParams.get('scope')!,/gmail\.readonly/,'reading replies needs a read scope');
   const state=authorize.searchParams.get('state')!;
-  assert.equal((await req('/mailboxes/status')).body.domains.length,2,'nothing connects before the redirect returns');
+  // A new workspace starts empty, so this counts what the account itself has: nothing yet.
+  assert.equal((await req('/mailboxes/status')).body.domains.length,0,'nothing connects before the redirect returns');
 
   const callback=await fetch(`${base}/oauth/mailbox/callback?code=stub-code&state=${state}`);
   assert.equal(callback.status,200);

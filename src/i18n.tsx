@@ -1,7 +1,7 @@
 import React from 'react';
+import {countries,regions} from '../server/geo';
 export type Locale='ru'|'en';
-const pairs=`
-Сервер приложения|Application server
+const pairs=`Сервер приложения|Application server
 Данные сохраняются только в этом браузере. Для общей рабочей области подключите сервер.|Data is saved only in this browser. Connect a server for a shared workspace.
 Подключение к серверной рабочей области.|Connected to the server workspace.
 Укажите HTTPS-адрес сервера.|Enter an HTTPS server URL.
@@ -597,12 +597,261 @@ Sendina найдёт реальные организации, проверит �
 Нужно подтверждение первой партии|The first batch is not approved yet
 Отправка только вручную|Sending is fully by hand
 Режим контроля|Control mode
+Что стоит продавать в выбранной точке прямо сейчас.|What is worth selling where you are looking, right now.
+Где продавать то, что у вас есть.|Where to sell what you already have.
+Почта, интеграции, исключения и рабочая область.|Mail, integrations, exclusions and your workspace.
+Доступ, подтверждение и режим поддержки.|Access, approval and support mode.
+Отправитель готов|Sender ready
+Отправитель не подключён|No sender connected
+Почта и домены|Mail & domains
+Домены и почта|Mail & domains
+Интеграции|Integrations
+Запрещённые адресаты|Blocked recipients
+Кампаний пока нет. Создайте первую рассылку — или начните с «Возможностей».|No campaigns yet. Create your first one — or start from Opportunities.
+Введите рабочий адрес — Sendina сама определит провайдера. Технические параметры SMTP и IMAP нужны только в расширенной настройке, если определить автоматически не удалось.|Enter a work address and Sendina detects the provider itself. SMTP and IMAP details are only needed in advanced setup, if detection fails.
+Ящики не подключены. Пока Sendina не может отправить ни одного письма.|No mailboxes connected. Until then Sendina cannot send anything.
+Модель, веб-поиск и поиск организаций настраиваются здесь один раз — для всех аккаунтов. Обычный пользователь не вводит платформенных ключей вообще.|The model, web search and organisation search are set up here once, for every account. An ordinary user never enters a platform key.
+Загрузить текущие настройки|Load current settings
+Адрес возврата для Google и Microsoft:|Redirect URL for Google and Microsoft:
+Демонстрационный режим · кампании, ответы и показатели — примеры|Demo mode · campaigns, replies and metrics are samples
+Очистить рабочую область|Clear the workspace
+Я ещё не выбрал, что продавать|I have not chosen what to sell
+Задайте страну или отрасль — Sendina исследует и предложит шесть актуальных возможностей с оценкой и обоснованием.|Name a country or an industry — Sendina researches and proposes six current opportunities, each scored and explained.
+От вас: территория или направление, остальное необязательно.|From you: a territory or a direction; everything else is optional.
+Искать возможности|Find opportunities
+Готовность отправителя|Sender readiness
+Подключите и проверьте почтовый ящик|Connect and verify a mailbox
+Ответов получено|Replies received
+Смотрите ветки в разделе «Ответы»|See the threads under Replies
+Ответы появятся после первых отправок|Replies appear after the first sends
+Кампаний|Campaigns
+В избранном|Saved
+Сохранённые возможности и рынки|Saved opportunities and markets
+Найти возможность или создать первую кампанию|Find an opportunity or create your first campaign
+Подключить и проверить почтовый ящик|Connect and verify a mailbox
+Найти адресатов для кампании|Find recipients for a campaign
+Проверить письма и подтвердить первую партию|Review the letters and approve the first batch
+Разобрать полученные ответы|Work through the replies you received
+Перейти|Open
+Избранные возможности|Saved opportunities
+Название|Name
+Избранного пока нет. Исследуйте возможности и сохраните лучшие.|Nothing saved yet. Research opportunities and keep the best ones.
+Этот раздел доступен только суперадминам.|This section is for superadmins only.
+Управляйте Sendina из чата: ищите возможности, исследуйте рынки, создавайте кампании и смотрите результаты. Чат видит ровно те же данные, что и этот интерфейс.|Run Sendina from a chat: find opportunities, research markets, create campaigns and read results. The chat sees exactly the data this interface shows.
+Модель и поиск предоставлены Sendina — вводить ключи не нужно. Эти поля пригодятся, только если вы хотите работать на своих.|Sendina provides the model and the search, so no keys are needed. These fields only matter if you would rather use your own.
+Ключи модели и поиска пока не настроены администратором. До этого исследование и поиск адресатов работать не будут.|An administrator has not set up the model and search keys yet. Until then research and recipient search will not run.
+Свои ключи (расширенно)|Your own keys (advanced)
+Этим адресам и доменам Sendina не отправляет ничего и никогда. Отказ и отписка попадают сюда автоматически и действуют во всех кампаниях рабочей области.|Sendina never sends anything to these addresses and domains. A refusal or an unsubscribe lands here automatically and applies across every campaign in the workspace.
+Добавить в запрещённые|Add to blocked
+Список пуст.|The list is empty.
+Создание кампаний, исследования, проверки и изменения состояния сохраняются с датой и идентификатором.|Campaign creation, research, checks and status changes are stored with a date and an identifier.
+В рабочей области сейчас демонстрационные кампании, ответы и показатели. Очистите её, прежде чем работать по-настоящему.|The workspace currently holds demonstration campaigns, replies and metrics. Clear it before doing real work.
+Рабочая область содержит только ваши собственные данные. Демонстрацию можно включить, чтобы посмотреть, как выглядит заполненная система.|The workspace holds only your own data. Turn the demonstration on to see what a populated system looks like.
+Включить демонстрацию|Turn on the demonstration
+Демонстрационный режим включён|Demonstration mode enabled
+Демонстрационные данные удалены|Demonstration data removed
+Состояние хранилища|Storage state
+PostgreSQL подключён: данные переживают передеплой.|PostgreSQL is connected: data survives a redeploy.
+Хранилище — файл контейнера. Подключите PostgreSQL, иначе данные пропадут при передеплое.|Storage is a container file. Connect PostgreSQL, or data is lost on redeploy.
+Файл контейнера|Container file
+Рабочая область сохраняется|Workspace is persisted
+Хранилище не настроено|Storage not configured
+Адрес сервера, служебные токены и состояние хранилища — администраторская информация. Если что-то не работает, обратитесь к администратору Sendina.|The server address, service tokens and storage state are administrator information. If something does not work, contact your Sendina administrator.
+Сейчас открыта демонстрация в браузере. Укажите адрес сервера, чтобы войти под своим аккаунтом.|You are viewing the browser demonstration. Enter a server address to sign in to your own account.
+Авторизация:|Authorization:
+Инструкция подключения ↗|Connection guide ↗
+Введите рабочий адрес — Sendina определит провайдера сама. Это ещё не подключение.|Enter a work address and Sendina detects the provider itself. This is not a connection yet.
+Рабочий e-mail|Work e-mail
+Расширенная настройка|Advanced setup
+Расширенная настройка. Эти параметры есть в панели вашего почтового провайдера.|Advanced setup. These values are in your mail provider control panel.
+Записей пока нет.|No entries yet.
+Записей нет.|No entries.
+Целевое событие:|Target event:
+Поиск возможностей|Opportunity search
+Исследовано:|Researched:
+Все поля необязательны. Чем точнее условие, тем конкретнее шесть предложений.|Every field is optional. The more precise the condition, the more concrete the six proposals.
+Страна, регион или город|Country, region or city
+Направление или отрасль|Direction or industry
+Дополнительное условие|Additional condition
+Идёт исследование…|Researching…
+Возможностей пока нет. Задайте условия и нажмите «Найти возможности».|No opportunities yet. Set your conditions and press Find opportunities.
+Избранное|Saved
+Избранное пусто. Сохранённое здесь остаётся, когда вы запускаете новый поиск.|Nothing saved. What you keep here stays when you run a new search.
+Исследование выполнено|Research complete
+Сохранено в избранное|Saved
+Удалено из избранного|Removed from saved
+Кампания создана из возможности|Campaign created from the opportunity
+Кампания создана из рынка|Campaign created from the market
+Например, стоматологии или логистика|For example, dental clinics or logistics
+Например, чек от 2000 $|For example, a ticket above $2,000
+Например, Нью-Йорк|For example, New York
+Например, автоматизация записи для клиник|For example, booking automation for clinics
+Исследование рынка|Market research
+У меня есть страна|I have a country
+У меня есть ниша|I have a niche
+Оценить моё сочетание|Score my combination
+Выберите территорию — Sendina предложит шесть самых перспективных ниш для неё на сегодня.|Choose a territory and Sendina proposes the six most promising niches for it today.
+Опишите нишу, продукт или направление — Sendina предложит шесть самых перспективных стран или регионов.|Describe a niche, product or direction and Sendina proposes the six most promising countries or regions.
+Задайте и локацию, и нишу — Sendina только оценит это сочетание и не предложит других.|Give both a location and a niche and Sendina only scores that combination, proposing nothing else.
+Ниша, продукт или направление|Niche, product or direction
+Исследовать рынок|Research the market
+Оценить сочетание|Score the combination
+Результатов пока нет. Выберите режим и запустите исследование.|No results yet. Pick a mode and run the research.
+Для кого|Who it is for
+Боль|Problem
+Почему сейчас|Why now
+Почему эта локация|Why this location
+Платёжеспособность|Ability to pay
+Доступность адресатов|Recipient reach
+Почему такая оценка|Why this score
+Источники исследования|Research sources
+В избранное|Save
+Удалить из избранного|Remove from saved
+Реализация|Implementation
+Продажа|Sales
+Конкуренция|Competition
+Правовой риск|Legal risk
+Срочность|Urgency
+Готовность платить|Willingness to pay
+Доступность покупателей|Buyer reach
+Преимущество от ИИ|AI advantage
+Размер рынка|Market size
+Сложность реализации|Implementation difficulty
+Сложность продажи|Sales difficulty
+низкая|low
+средняя|medium
+высокая|high
+Все|All
+С ответом|Replied
+Ждут ответа|Awaiting a reply
+Есть незакрытое действие|Open action
+Входящее|Incoming
+Исходящее|Outgoing
+Решение системы:|System decision:
+Следующее действие:|Next action:
+Переписки ещё нет.|No correspondence yet.
+Итог|Outcome
+Следующее действие выполнено|Next action done
+Выполнено|Done
+Не выполнено|Not done
+Действий не требуется|No action needed
+Ответа ещё нет|No reply yet
+Адресат уже исключён|Recipient already excluded
+Ветка обновлена|Thread updated
+Переписок в этой категории пока нет. Они появятся, когда кампания отправит первые письма и придут ответы.|No conversations in this category yet. They appear once a campaign sends its first letters and replies arrive.
+Встреча назначена|Meeting scheduled
+Документы получены|Documents received
+Интерес|Interest
+Ещё нет результата|No outcome yet
+Другой результат|Another outcome
+Есть ответ|Replied
+Письмо отправлено, ответа нет|Letter sent, no reply
+Черновик письма|Draft letter
+Черновик, отправка не выполнялась|Draft, never sent
+Ответ|Reply
+Классифицировано:|Classified as:
+Предложить время встречи|Propose a meeting time
+Ответить на уточнение и назвать следующий шаг|Answer the question and name the next step
+Снять возражение фактами и предложить короткий разговор|Address the objection with facts and offer a short call
+Написать названному коллеге, сославшись на переадресацию|Write to the named colleague, citing the referral
+Поставить напоминание и вернуться позже|Set a reminder and come back later
+Ничего не отправлять: адресат исключён|Send nothing: the recipient is excluded
+Дождаться ответа человека|Wait for a human reply
+Проверить адрес: письмо не доставлено|Check the address: the letter was not delivered
+Дождаться ответа|Wait for a reply
+Период|Period
+Сегодня|Today
+Вчера|Yesterday
+7 дней|7 days
+30 дней|30 days
+90 дней|90 days
+Всё время|All time
+Произвольный период|Custom range
+С|From
+По|To
+Кампании|Campaigns
+Активные|Active
+Завершённые и на паузе|Finished and paused
+Расчёт за|Calculated over
+Сравнение с|Compared with
+без изменений|no change
+к предыдущему периоду|vs the previous period
+Демонстрационная рабочая область|Demonstration workspace
+Показатели считаются по примерам. В обычном аккаунте здесь только собственные события.|Figures are computed from samples. In an ordinary account only your own events appear here.
+Выберите период, чтобы посчитать показатели.|Choose a period to compute the figures.
+Писем подготовлено|Letters prepared
+Ответов|Replies
+Встреч назначено|Meetings scheduled
+Кампания целиком|The whole campaign
+создана|created
+состояние:|status:
+Подготовлено|Prepared
+Ответы по дням|Replies by day
+За выбранный период ответов не было.|There were no replies in the selected period.
+В выбранном периоде кампаний нет.|There are no campaigns in the selected period.
+Новый адрес получает доступ только после подтверждения. Рабочие области разделены: чужие кампании и адресаты доступны только в режиме поддержки, и только для чтения.|A new address gets access only after approval. Workspaces are separated: another account's campaigns and recipients are reachable only in support mode, and only for reading.
+Аккаунтов пока нет.|No accounts yet.
+Просмотреть как пользователь|View as user
+Просмотр как пользователь · только чтение|View as user · read only
+Вы смотрите рабочую область|You are viewing the workspace of
+. Изменить в ней ничего нельзя: Sendina не выдаёт сессию этого аккаунта, а сам просмотр записан в журнал поддержки.|. Nothing in it can be changed: Sendina issues no session for that account, and the visit itself is written to the support log.
+К списку аккаунтов|Back to accounts
+только чтение|read only
+Переписки|Conversations
+Исключено адресов|Excluded addresses
+Письма|Letters
+Кампаний нет.|No campaigns.
+Домен|Domain
+Ящики|Mailboxes
+Готовность|Readiness
+Ящики не подключены.|No mailboxes connected.
+Последний ответ|Last reply
+Классификация|Classification
+Переписок нет.|No conversations.
+Журнал рабочей области|Workspace activity log
+Журнал поддержки|Support log
+Кто, когда и чью рабочую область открывал. Любое изменение чужих данных в будущем станет отдельным привилегированным действием и попадёт сюда же.|Who opened whose workspace, and when. Any future change to another account's data becomes its own privileged action and is recorded here too.
+Регион|Region
+Не задан|Not set
+Город (необязательно)|City (optional)
+Пусть Sendina выберет территорию сама|Let Sendina choose the territory
+Территорию выберет Sendina и назовёт её в результате.|Sendina will choose the territory and name it in the result.
+Начните вводить страну|Start typing a country
+Поиск страны|Country search
+Убрать страну|Remove country
+Выбирает Sendina|Sendina chooses
+Веб-поиск не подключён: результаты основаны только на знаниях модели.|Web search is not connected: results rely on the model's own knowledge.
+Укажите страну или регион.|Name a country or a region.
+Укажите нишу, продукт или направление.|Name a niche, product or direction.
+Для ручной оценки нужны и локация, и ниша.|Scoring by hand needs both a location and a niche.
+Возможность не найдена. Выполните поиск заново или откройте избранное.|Opportunity not found. Run the search again or open your saved list.
+Такой возможности нет в избранном|That opportunity is not in your saved list
+Поднимают оценку:|Raising the score:
+Снижают:|Lowering it:
 `;
-export const dictionary:Record<string,string>=Object.fromEntries(pairs.trim().split('\n').map(line=>line.split('|')));
+/** Country and region names come from the geography module rather than being repeated here,
+    so the selector and the dictionary can never disagree about what a country is called. */
+const geography=Object.fromEntries([
+ ...countries.map(c=>[c.ru,c.en]),
+ ...regions.map(r=>[r.id,r.en])
+]);
+/** JSX folds a wrapped line into one space, so a key written across two lines here would never
+    match the text React actually renders. Keys and lookups are both squashed to single spaces. */
+const squash=(text:string)=>text.replace(/\s+/g,' ').trim();
+const entries:[string,string][]=[];
+for(const line of pairs.trim().split(String.fromCharCode(10))){
+ const at=line.indexOf('|');
+ if(at<0)continue;
+ entries.push([squash(line.slice(0,at)),line.slice(at+1)]);
+}
+export const dictionary:Record<string,string>={...geography,...Object.fromEntries(entries)};
 const ordered=Object.keys(dictionary).filter(k=>/[А-Яа-яЁё]/.test(k)).sort((a,b)=>b.length-a.length);
 // Word boundaries keep a short key such as "Адрес" from being replaced inside "Адресаты".
 const pattern=new RegExp('(?<![А-Яа-яЁё])(?:'+ordered.map(k=>k.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|')+')(?![А-Яа-яЁё])','g');
-export function translate(text:string,locale:Locale){if(locale==='ru')return text;return dictionary[text]??text.replace(pattern,key=>dictionary[key]);}
+export function translate(text:string,locale:Locale){
+ if(locale==='ru')return text;
+ return dictionary[text]??dictionary[squash(text)]??text.replace(pattern,key=>dictionary[key]);
+}
 /** Translate presentation text while preserving option values, form data and handlers. */
 export function localize(node:React.ReactNode,locale:Locale):React.ReactNode{
  if(typeof node==='string')return translate(node,locale);
@@ -615,4 +864,13 @@ export function localize(node:React.ReactNode,locale:Locale):React.ReactNode{
  if(node.type==='option'&&props.value===undefined)updates.value=props.children;
  if(props.children!==undefined)updates.children=localize(props.children,locale);
  return React.cloneElement(node,updates);
+}
+
+/** The walker below can only reach the tree it is handed. A screen rendered as its own component
+    produces its tree later, inside React, so it localizes its own output through this context —
+    which is also how a component nested in another one stays translated. */
+export const LocaleContext=React.createContext<Locale>('ru');
+export function useLocalize(){
+ const locale=React.useContext(LocaleContext);
+ return (node:React.ReactNode)=>localize(node,locale);
 }

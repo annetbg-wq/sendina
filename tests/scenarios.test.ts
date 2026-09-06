@@ -49,7 +49,7 @@ function infrastructure(){
     :asked.includes('Оцени соответствие')
     ?{organisations:[{name:'Harbour Hotel',fit:90,why:'Небольшой отель с онлайн-бронированием'},
       {name:'Riverside Rooms',fit:70,why:'Публично ищет партнёров'}]}
-    :asked.includes('выбираешь рынок')
+    :asked.includes('выбираешь страну или регион')
     ?{market:'Великобритания',why:'Продукт описан для небольших отелей, а найденные организации находятся там.'}
     :candidates;
    res.end(JSON.stringify({choices:[{message:{content:JSON.stringify(answer)}}]}));

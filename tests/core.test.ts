@@ -122,7 +122,11 @@ test('one core serves the UI and MCP: OAuth, recipient research, bulk detection 
    return r.structuredContent.result;
   };
   const tools=await client.listTools();
-  assert.equal(tools.tools.length,21);
+  // The advertised list and the registered list must be the same list, so a tool added for a new
+  // screen cannot be offered in Settings without existing, or exist without being offered.
+  const advertised=(await req('/integrations')).body.mcp.tools as string[];
+  assert.deepEqual(tools.tools.map(t=>t.name).sort(),[...advertised].sort(),
+   'the advertised MCP tools must be exactly the registered ones');
 
   const campaign=await call('create_campaign',{name:'Booking automation outreach',market:'United Kingdom',
    goal:'Sell a service',context:'Booking automation for independent hotels',event:'Meeting'});

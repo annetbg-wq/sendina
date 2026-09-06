@@ -8,9 +8,10 @@
     "dev": "concurrently -k \"tsx watch server/index.ts\" \"vite\"",
     "build": "tsc --noEmit && vite build",
     "start": "tsx server/index.ts",
-    "test": "tsx --test tests/*.test.ts",
+    "test": "tsx --test --test-concurrency=3 tests/*.test.ts",
     "test:e2e": "playwright test",
-    "test:e2e:gate": "playwright test --config=gate.config.ts"
+    "test:e2e:gate": "playwright test --config=gate.config.ts",
+    "test:e2e:product": "playwright test --config=product.config.ts"
   },
   "repository": {
     "type": "git",

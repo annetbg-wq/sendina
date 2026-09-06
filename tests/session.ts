@@ -1,4 +1,11 @@
 import assert from 'node:assert/strict';
+
+/** Every test file spawns its own server, so ports are allocated by hand and must not collide.
+    APIs: api 3102, core 3103, connect 3105, accounts 3106, scenarios 3108, origin 3109,
+    connector 3110, product harness 3210.
+    Stubs and SMTP: 3189 connector mail, 3190 connector model, 3191 origin mail, 3192 scenarios
+    mail, 3193 scenarios stub, 3194 api mail, 3195 core mail, 3196 connect mail, 3197 accounts
+    mail, 3198 connect provider stub, 3199 core stub, 3211/3212 product stub and mail. */
 import {messageText} from './smtpstub';
 
 type Stub={inbox:{to:string;body:string}[]};

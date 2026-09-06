@@ -6,3 +6,78 @@
 @media(max-width:560px){.sidebar{display:none}.sidebar.open{display:flex;width:217px;box-shadow:20px 0 50px #17264930}.sidebar.open .brand>span{display:block}.sidebar.open .nav-item{font-size:12px;justify-content:flex-start;gap:15px}.sidebar.open .brand{justify-content:flex-start}.main-shell{margin-left:0}.mobile-menu{display:inline-flex}.topbar{height:62px;padding:0 12px;gap:10px}.search{flex:1;width:auto}.search input{font-size:10px}.top-actions{gap:8px}.system{display:none}.notification{display:none}.profile>svg{display:none}main{padding:19px 14px 0}.breadcrumb{margin-bottom:14px}.page-title{margin-bottom:19px;align-items:flex-start}.page-title h1{font-size:23px}.page-title p{font-size:10px;line-height:1.8}.page-title>button{font-size:0;padding:9px}.page-title>button svg{width:20px}.hero-grid{grid-template-columns:1fr;gap:12px}.hero{display:flex;padding:20px 17px;min-height:165px;gap:16px}.hero-art{width:65px;height:65px;margin:0}.hero h2{min-height:0;font-size:16px}.hero p{font-size:10px;margin-bottom:12px}.hero button{font-size:10px}.eyebrow{font-size:6px}.stats{gap:9px}.stat{min-height:90px;padding:11px 9px;gap:8px}.stat-icon{width:30px;height:30px}.stat-icon svg{width:19px}.stat span{font-size:8px}.stat h2.text-value{font-size:11px}.stat p{font-size:7px}.stat h2{font-size:22px}.card-heading{padding:14px 12px 10px}.card-heading h3{font-size:11px;gap:7px}.card-heading .text-link{font-size:8px}.card-heading .text-link svg{width:11px}.next-body{padding:0 12px 12px;flex-wrap:wrap}.next-body li{font-size:9px}.ai-label{font-size:6px}.reasons>div{grid-template-columns:10px 110px 1fr 25px;font-size:8px;gap:6px}.country{display:none}td{font-size:8px;padding:9px 6px}th{font-size:7px;padding:6px}.funnel{padding:10px}.funnel>div>span{font-size:6px}.funnel b{font-size:15px}.funnel-icon{width:30px;height:30px}.funnel small{font-size:7px}.funnel-arrow{font-size:12px}.page-footer{font-size:7px}.info-banner{padding:14px;flex-wrap:wrap;font-size:11px}.info-banner button{margin-left:0}.reply{padding:15px;gap:9px}.reply-avatar{width:29px;height:29px}.reply-heading{display:block}.reply-heading h3{font-size:11px}.reply-heading h3 span{display:block;margin:4px 0}.reply-content>small{word-break:break-all;font-size:8px}.reply-actions{align-items:flex-start;flex-direction:column}.modal-backdrop{padding:12px}.modal{padding:23px 18px}.modal>h2{font-size:20px}.form-row{grid-template-columns:1fr;gap:0}.chart>div{grid-template-columns:110px 1fr 20px;gap:12px;font-size:9px}.metric{padding:16px}.metric h2{font-size:24px}.toast{font-size:11px;width:90vw}.idea-card{padding:20px}.idea-card h2{font-size:18px}.setting form{flex-wrap:wrap}}
 .locale-switch{background:white;color:#667b9d;border:1px solid #e2e8f2;padding:7px 9px;font-size:10px;gap:5px}.integration-details code{font-size:11px}.integration-details li{margin:8px 0}html[lang=en] .hero h2{font-size:17px}html[lang=en] .nav-item{font-size:11px}@media(max-width:850px){html[lang=en] .nav-item{font-size:0}}@media(max-width:560px){html[lang=en] .sidebar.open .nav-item{font-size:12px}}
 .demo-banner{display:flex;align-items:center;gap:8px;background:#fff9ea;border:1px solid #f2e6c7;color:#a1884a;border-radius:6px;padding:9px 12px;font-size:9px;margin-bottom:17px}.demo-banner button{margin-left:auto}.backend-token{display:block;font-size:10px;color:#8492a8;margin-top:15px}.backend-token input{margin-top:7px}
+
+/* --- Location picker: a searchable list replaced the fixed six markets ---------------- */
+.location-picker{display:grid;gap:11px;margin:11px 0}
+.location-search{display:grid;gap:6px}
+.location-input{display:flex;align-items:center;gap:8px;border:1px solid #dce2ec;border-radius:7px;padding:0 12px;background:white}
+.location-input svg{color:#8b94a7;flex-shrink:0}
+.location-input input{border:none;padding:11px 0;box-shadow:none}
+.location-input input:focus{box-shadow:none}
+.location-matches{list-style:none;margin:0;padding:0;border:1px solid #e2e8f2;border-radius:8px;overflow:hidden;background:white}
+.location-matches li+li{border-top:1px solid #eef2f8}
+.location-matches button{width:100%;justify-content:flex-start;background:none;color:#182133;border-radius:0;padding:9px 12px;font-weight:600}
+.location-matches button:hover{background:#f2f6fd;filter:none;box-shadow:none}
+.location-matches small{margin-left:auto;color:#8b94a7;font-weight:600}
+.location-chosen{display:flex;flex-wrap:wrap;gap:7px}
+.chip{display:inline-flex;align-items:center;gap:6px;background:#eef3fd;border:1px solid #dbe5fa;border-radius:999px;padding:4px 6px 4px 8px;font-weight:700;font-size:11px}
+.chip button{background:none;color:#5a6a86;padding:2px;border-radius:999px}
+.chip button:hover{background:#dbe5fa;filter:none;box-shadow:none}
+
+/* --- Research cards: one shape for opportunities and markets -------------------------- */
+.search-panel .padded{display:grid;gap:12px}
+.research-card{display:flex;flex-direction:column;gap:9px;padding:17px}
+.research-top{display:flex;align-items:center;justify-content:space-between}
+.research-card h2{font-size:15px;font-weight:800;line-height:1.3}
+.research-card .score{font-size:20px;font-weight:800;padding:3px 9px;border-radius:8px}
+.score.high{background:#e6f6ec;color:#127a41}
+.score.mid{background:#fdf4e0;color:#9a6b06}
+.score.low{background:#fdecec;color:#a52c2c}
+.research-facts{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0;font-size:11px}
+.research-facts dt{color:#8b94a7;font-weight:700;white-space:nowrap}
+.research-facts dd{margin:0}
+.research-levels{display:flex;flex-wrap:wrap;gap:6px}
+.level{font-size:10px;font-weight:700;border-radius:999px;padding:3px 8px;background:#eef2f8;color:#5a6a86}
+.level.low{background:#e6f6ec;color:#127a41}
+.level.mid{background:#fdf4e0;color:#9a6b06}
+.level.high{background:#fdecec;color:#a52c2c}
+.research-why{display:grid;gap:8px;background:#f7f9fc;border-radius:8px;padding:11px}
+.factor-bars{display:grid;gap:4px}
+.factor{display:grid;grid-template-columns:130px 1fr 24px;align-items:center;gap:8px;font-size:10px}
+.factor .bar{height:5px;background:#e4eaf4;border-radius:3px;overflow:hidden}
+.factor .bar i{display:block;height:100%;background:#2459ed}
+.factor.negative .bar i{background:#d9822b}
+.sources{margin:0;padding-left:16px;font-size:10px}
+.research-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:auto;padding-top:4px}
+
+/* --- Reply threads: collapsed by default, whole conversation when opened -------------- */
+.thread-card{padding:0;overflow:hidden}
+.thread-summary{display:grid;grid-template-columns:18px 1.1fr 1.6fr auto 1.1fr;align-items:center;gap:14px;width:100%;
+ background:none;color:#182133;border-radius:0;padding:14px 16px;text-align:left;font-weight:500}
+.thread-summary:hover{background:#f7f9fc;filter:none;box-shadow:none}
+.thread-who small{display:block;color:#8b94a7}
+.thread-last p{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:11px}
+.thread-last small{display:flex;align-items:center;gap:4px;color:#8b94a7;margin-top:3px}
+.thread-marks{display:flex;flex-direction:column;gap:4px;align-items:flex-end}
+.thread-next{display:grid;gap:3px;font-size:11px}
+.thread-next .done{color:#127a41;font-weight:700;display:inline-flex;align-items:center;gap:4px}
+.thread-next .pending{color:#9a6b06;font-weight:700}
+.thread-body{border-top:1px solid #eef2f8;padding:14px 16px;display:grid;gap:12px}
+.thread{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.thread li{border-radius:9px;padding:11px 13px;border:1px solid #e6ecf6}
+.thread-out{background:#f7f9fc}
+.thread-in{background:#f2f8f4;border-color:#d8ecdf}
+.thread-head{display:flex;justify-content:space-between;align-items:center;font-size:10px;color:#8b94a7;margin-bottom:5px}
+.thread-direction{display:inline-flex;align-items:center;gap:4px;font-weight:700}
+.thread-controls{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px}
+.thread-controls label{max-width:230px}
+
+/* --- Analytics: filters and the daily chart ------------------------------------------ */
+.filter-row{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
+.filter-row label{max-width:220px}
+.daily-chart{display:flex;align-items:flex-end;gap:3px;height:150px;overflow-x:auto;padding-top:8px}
+.daily-bar{position:relative;flex:1;min-width:14px;height:100%;display:flex;align-items:flex-end;justify-content:center}
+.daily-bar i,.daily-bar em{position:absolute;bottom:16px;width:70%;border-radius:3px 3px 0 0}
+.daily-bar i{background:#c9d8f8}
+.daily-bar em{background:#2459ed}
+.daily-bar span{position:absolute;bottom:0;font-size:9px;color:#8b94a7;white-space:nowrap}

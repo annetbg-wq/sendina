@@ -10,13 +10,28 @@ import {policy,isBulk} from './policy';
 import {findRecipients,resolveMode} from './recipients';
 import {aiReady,aiModel,complete} from './ai';
 import {searchReady,searchProvider} from './search';
-import {noDns,box,type State} from './seed';
+import {noDns,box,anywhere,demoSeed,seed as seedState,type State,type Research} from './seed';
 import {domainReadiness,mailboxReadiness} from './readiness';
+import {countries,regions,locationLabel,normalizeLocation} from './geo';
+import {researchOpportunities,researchMarkets,campaignDraft,RESULTS} from './research';
+import {threads as buildThreads,outcomes} from './threads';
+import {analytics as buildAnalytics} from './analytics';
 
-/** The closed set of markets a campaign may target, shared with the interface. */
-export const markets=['США','Германия','Испания','Австралия','Великобритания','ОАЭ'];
+/** Every country the selector offers. A campaign is not limited to this list — it may name a
+    region, a city, several countries, or leave the choice to Sendina — but a recommendation has
+    to pick something nameable, and this is the set it picks from. */
+export const markets=countries.map(c=>c.ru);
 const audit=(s:State,action:string)=>s.audit.unshift({id:randomUUID(),at:new Date().toISOString(),action});
 const campaignOf=(s:State,id:string)=>{const c=s.campaigns.find(c=>c.id===id);if(!c)throw Error('Кампания не найдена');return c;};
+
+/** A researched card, whether it is still in the current search results or already kept.
+    One lookup for both, so "создать тест" works the same from a fresh result and a favourite. */
+const findResearch=(s:State,id:string):Research=>{
+ const item=[...(s.research.opportunities?.items??[]),...(s.research.markets?.items??[]),...s.favourites]
+  .find(x=>x.id===id);
+ if(!item)throw Error('Возможность не найдена. Выполните поиск заново или откройте избранное.');
+ return item;
+};
 
 /** Addresses of this campaign that also sit in another campaign of the workspace. */
 export function duplicateEmails(s:State,campaignId:string){
@@ -49,7 +64,10 @@ const compose=(c:any,p:any)=>isBulk(p.reason??'')
 const contactInput=z.object({email:z.email(),name:z.string().min(1),company:z.string().min(1),source:z.url(),basis:z.string().min(3),reason:z.string().min(10)});
 
 export const schemas={
- createCampaign:z.object({name:z.string().min(3).max(150),market:z.string().min(1),goal:z.string().min(1),
+ /** A campaign may be told where to look either as a structured location or as the readable
+     market label older clients and MCP already send. One of the two is enough. */
+ createCampaign:z.object({name:z.string().min(3).max(150),market:z.string().min(1).optional(),
+  location:z.any().optional(),goal:z.string().min(1),
   context:z.string().min(10).max(5000),event:z.string().min(1),
   control:z.enum(['auto','confirm','manual']).default('confirm')}),
  control:z.object({id:z.string().min(1),control:z.enum(['auto','confirm','manual'])}),
@@ -68,7 +86,18 @@ export const schemas={
  reply:z.object({campaignId:z.string().min(1),email:z.email(),text:z.string().min(1),eventId:z.string().min(1),
   category:z.enum(['positive','neutral','objection','referral','later','unsubscribe','negative','automatic','bounce'])}),
  suppress:z.object({email:z.email()}),
- recipientMode:z.object({mode:z.enum(['auto','organisations','search','proposal'])})
+ recipientMode:z.object({mode:z.enum(['auto','organisations','search','proposal'])}),
+ researchOpportunities:z.object({location:z.any().optional(),industry:z.string().max(200).default(''),
+  note:z.string().max(400).default('')}),
+ researchMarkets:z.object({mode:z.enum(['country','niche','manual']),location:z.any().optional(),
+  niche:z.string().max(200).default('')}),
+ favourite:z.object({id:z.string().min(1)}),
+ testFromResearch:z.object({id:z.string().min(1),control:z.enum(['auto','confirm','manual']).default('confirm')}),
+ threadAction:z.object({email:z.email(),done:z.boolean().optional(),
+  outcome:z.enum(['meeting','documents','interest','later','refused','unsubscribed','bounced','none','other']).optional()}),
+ analytics:z.object({period:z.string().max(20).default('30d'),from:z.string().max(40).optional(),
+  to:z.string().max(40).optional(),campaign:z.string().max(80).default('all')}),
+ demo:z.object({enabled:z.boolean()})
 };
 
 export const operations={
@@ -100,12 +129,27 @@ export const operations={
    duplicates:duplicateEmails(s,id)};},
 
  listCampaigns:async(ctx:Ctx)=>(await read(ctx.accountId)).campaigns,
- listOpportunities:async(ctx:Ctx)=>({demo:true,opportunities:(await read(ctx.accountId)).opportunities}),
+ /** The current opportunity search and the kept favourites. A new search replaces the first
+     and never touches the second, which is what makes the screen and MCP show the same six. */
+ listOpportunities:async(ctx:Ctx)=>{const s=await read(ctx.accountId);
+  return {results:s.research.opportunities?.items??[],at:s.research.opportunities?.at??null,
+   input:s.research.opportunities?.input??null,
+   favourites:s.favourites.filter(f=>f.kind==='opportunity')};},
+ listMarkets:async(ctx:Ctx)=>{const s=await read(ctx.accountId);
+  return {results:s.research.markets?.items??[],at:s.research.markets?.at??null,
+   input:s.research.markets?.input??null,
+   favourites:s.favourites.filter(f=>f.kind==='market')};},
 
+ /** The one way a campaign is created, whichever screen or connector asked for it. */
  createCampaign:(ctx:Ctx,input:unknown)=>{const body=schemas.createCampaign.parse(input);
-  return change(ctx.accountId,s=>{const c={...body,id:randomUUID(),status:'draft',sent:0,positive:0,value:0,
+  // A structured location wins; a plain market name is read as one country, as before.
+  const location=body.location!==undefined?normalizeLocation(body.location)
+   :body.market?normalizeLocation({countries:[body.market]}):anywhere();
+  const market=locationLabel(location);
+  return change(ctx.accountId,s=>{const c={...body,market,location,id:randomUUID(),status:'draft',
+    sent:0,positive:0,value:0,createdAt:new Date().toISOString(),
     firstBatchApprovedAt:null as string|null};
-   s.campaigns.unshift(c);audit(s,`Создана кампания «${c.name}» (контроль: ${c.control})`);return c;});},
+   s.campaigns.unshift(c);audit(s,`Создана кампания «${c.name}» (${market}, контроль: ${c.control})`);return c;});},
 
  setCampaignStatus:(ctx:Ctx,input:unknown)=>{const {id,status}=schemas.setStatus.parse(input);
   return change(ctx.accountId,s=>{const c=campaignOf(s,id);
@@ -122,7 +166,7 @@ export const operations={
  addMailbox:(ctx:Ctx,input:unknown)=>{const email=schemas.mailbox.parse(input).email.toLowerCase();
   return change(ctx.accountId,s=>{const name=email.split('@')[1];let d=s.domains.find(d=>d.name===name);
    if(!d)s.domains.push(d={id:randomUUID(),name,limit:0,used:0,dns:noDns(),mailboxes:[]});
-   if(!d.mailboxes.some(m=>m.email===email))d.mailboxes.push(box(email));
+   if(!d.mailboxes.some((m:any)=>m.email===email))d.mailboxes.push(box(email));
    audit(s,`Добавлен ящик ${email}. Ящик не подключён: нужны подключение провайдера и тестовая отправка.`);
    return {...d,readiness:domainReadiness(d,s.stopped)};});},
 
@@ -178,7 +222,8 @@ export const operations={
    const contacts=s.contacts.filter(p=>p.campaignId===id).slice(0,limit);
    return contacts.map(p=>{const draft=compose(c,p);
     let m=s.messages.find(m=>m.contactId===p.id);
-    if(!m){m={id:randomUUID(),campaignId:c.id,contactId:p.id,email:p.email,subject:draft.subject,text:draft.text,status:'draft',bulk:draft.bulk};s.messages.push(m);}
+    if(!m){m={id:randomUUID(),campaignId:c.id,contactId:p.id,email:p.email,subject:draft.subject,text:draft.text,
+     status:'draft',bulk:draft.bulk,at:new Date().toISOString(),sentAt:null};s.messages.push(m);}
     else Object.assign(m,{subject:draft.subject,text:draft.text,bulk:draft.bulk});
     return {...m,name:p.name,company:p.company,source:p.source,reason:p.reason,evidence:p.evidence,
      verification:p.verification,confidence:p.confidence,origin:p.origin,
@@ -190,9 +235,17 @@ export const operations={
   const body=z.object({context:z.string().min(10).max(5000),goal:z.string().min(1).max(200)}).parse(input);
   const config=await infrastructure(ctx.accountId);
   const answer=await complete({name:'market_recommendation',config,
-   schema:z.object({market:z.enum(markets as [string,...string[]]),why:z.string().min(10).max(400)}),
-   system:'Ты выбираешь рынок для первой кампании из закрытого списка. Отвечай только JSON.',
-   user:`Продукт и контекст: ${body.context}\n\nЦель: ${body.goal}\n\nДоступные рынки: ${markets.join(', ')}.\n\nВыбери один и объясни выбор одним предложением.`});
+   schema:z.object({market:z.string().min(2).max(80),why:z.string().min(10).max(400)}),
+   system:'Ты выбираешь страну или регион для первой кампании. Отвечай только JSON.',
+   user:`Продукт и контекст: ${body.context}
+
+Цель: ${body.goal}
+
+`+
+    `Назови одну страну из списка либо один регион (${regions.map(r=>r.id).join(', ')}) и объясни выбор одним предложением.
+
+`+
+    `Страны: ${markets.join(', ')}.`});
   return answer;},
 
  /** How much of the first sending the operator wants to see before it happens. */
@@ -246,6 +299,98 @@ export const operations={
  suppress:(ctx:Ctx,input:unknown)=>{const email=schemas.suppress.parse(input).email.toLowerCase();
   return change(ctx.accountId,s=>{if(!s.suppressed.includes(email))s.suppressed.push(email);
    audit(s,`Глобальное исключение: ${email}`);return {ok:true,email};});},
+
+
+ // --- Research ------------------------------------------------------------
+ /** Opportunity Research. One mechanism, three entrances: this screen, MCP, and the platform
+     model. The result replaces the previous search rather than accumulating, so the six cards
+     the operator sees are the six rows a connector reads back. */
+ researchOpportunities:async(ctx:Ctx,input:unknown)=>{const body=schemas.researchOpportunities.parse(input);
+  const location=normalizeLocation(body.location??{auto:true});
+  const config=await infrastructure(ctx.accountId);
+  const found=await researchOpportunities({location,industry:body.industry,note:body.note},config);
+  const request={location,industry:body.industry,note:body.note};
+  return change(ctx.accountId,s=>{
+   s.research.opportunities={at:found.at,input:request,items:found.items};
+   audit(s,`Поиск возможностей (${locationLabel(location)}${body.industry?`, ${body.industry}`:''}): найдено ${found.items.length}.`);
+   return {results:found.items,at:found.at,input:request,notes:found.notes,grounded:found.grounded,
+    favourites:s.favourites.filter(f=>f.kind==='opportunity')};});},
+
+ /** Market Research: a country asks for niches, a niche asks for countries, and both together
+     ask only for a verdict. The same mechanism answers all three. */
+ researchMarkets:async(ctx:Ctx,input:unknown)=>{const body=schemas.researchMarkets.parse(input);
+  const location=normalizeLocation(body.location??{auto:true});
+  const config=await infrastructure(ctx.accountId);
+  const found=await researchMarkets({mode:body.mode,location,niche:body.niche},config);
+  const request={mode:body.mode,location,niche:body.niche};
+  return change(ctx.accountId,s=>{
+   s.research.markets={at:found.at,input:request,items:found.items};
+   audit(s,`Исследование рынка (${body.mode==='country'?'по стране':body.mode==='niche'?'по нише':'ручная оценка'}): найдено ${found.items.length}.`);
+   return {results:found.items,at:found.at,input:request,notes:found.notes,grounded:found.grounded,
+    favourites:s.favourites.filter(f=>f.kind==='market')};});},
+
+ /** Anything a search returned may be kept. Nothing is kept automatically. */
+ saveFavourite:(ctx:Ctx,input:unknown)=>{const {id}=schemas.favourite.parse(input);
+  return change(ctx.accountId,s=>{
+   const item=findResearch(s,id);
+   if(s.favourites.some(f=>f.id===item.id))return {saved:false,item};
+   s.favourites.unshift(item);
+   audit(s,`В избранное: «${item.name}» (${item.kind==='market'?'рынок':'возможность'}).`);
+   return {saved:true,item};});},
+
+ removeFavourite:(ctx:Ctx,input:unknown)=>{const {id}=schemas.favourite.parse(input);
+  return change(ctx.accountId,s=>{
+   const item=s.favourites.find(f=>f.id===id);
+   if(!item)throw Error('Такой возможности нет в избранном');
+   s.favourites=s.favourites.filter(f=>f.id!==id);
+   audit(s,`Удалено из избранного: «${item.name}».`);
+   return {ok:true,id};});},
+
+ /** "Создать тест" and "Подготовить тест" are the same button: both make an ordinary Campaign
+     through the ordinary path. There is no market campaign and no opportunity campaign. */
+ createTestFromResearch:async(ctx:Ctx,input:unknown)=>{const {id,control}=schemas.testFromResearch.parse(input);
+  const s=await read(ctx.accountId);
+  const item=findResearch(s,id);
+  const draft=campaignDraft(item);
+  const campaign=await operations.createCampaign(ctx,{...draft,control,
+   location:{countries:[item.market],region:'',city:'',auto:false}}) as any;
+  return {campaign,from:{id:item.id,kind:item.kind,name:item.name,score:item.score}};},
+
+ // --- Replies -------------------------------------------------------------
+ /** One card per recipient with the whole conversation behind it. */
+ threads:async(ctx:Ctx)=>{const s=await read(ctx.accountId);
+  return {threads:buildThreads(s),outcomes};},
+
+ /** Whether the recommended next action has been carried out, and how the thread ended. */
+ setThreadAction:(ctx:Ctx,input:unknown)=>{const body=schemas.threadAction.parse(input);
+  const email=body.email.toLowerCase();
+  return change(ctx.accountId,s=>{
+   const before=s.threads[email]??{done:false,outcome:'',at:new Date().toISOString()};
+   s.threads[email]={done:body.done??before.done,outcome:body.outcome??before.outcome,
+    at:new Date().toISOString()};
+   audit(s,`Ветка ${email}: ${body.outcome?`итог «${outcomes[body.outcome]}»`:''}${body.outcome&&body.done!==undefined?', ':''}${body.done!==undefined?(body.done?'следующее действие выполнено':'следующее действие не выполнено'):''}`);
+   return {email,...s.threads[email]};});},
+
+ // --- Analytics -----------------------------------------------------------
+ /** Every number the screen shows, for one period and one campaign selection. */
+ analytics:async(ctx:Ctx,input:unknown)=>{const body=schemas.analytics.parse(input??{});
+  return buildAnalytics(await read(ctx.accountId),body);},
+
+ // --- Demonstration -------------------------------------------------------
+ /** A demonstration is something the operator asks for, in their own workspace, and can undo.
+     It is never what a new account is given. */
+ setDemo:(ctx:Ctx,input:unknown)=>{const {enabled}=schemas.demo.parse(input);
+  return change(ctx.accountId,s=>{
+   if(enabled){
+    const demo=demoSeed();
+    Object.assign(s,demo,{settings:s.settings});
+    audit(s,'Включён демонстрационный режим: кампании, ответы и показатели — примеры.');
+   }else{
+    const fresh=seedState();
+    Object.assign(s,fresh,{settings:s.settings,audit:s.audit});
+    audit(s,'Демонстрационные данные удалены. Рабочая область пуста.');
+   }
+   return {demo:s.demo};});},
 
  setRecipientMode:async(ctx:Ctx,input:unknown)=>{const {mode}=schemas.recipientMode.parse(input);
   const config=await infrastructure(ctx.accountId);

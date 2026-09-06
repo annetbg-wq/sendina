@@ -9,22 +9,26 @@ import {mountAuth} from './auth';
 import {mountMcp} from './mcp';
 import {mountOauth} from './oauth';
 import {bindAddress} from './config';
+import {originAllowed} from './origins';
+import {countries,regions} from './geo';
+import {supportView,supportLog} from './support';
 import {accountForSession,listAccounts,decideAccount,connectorCode,type Account} from './accounts';
 import {accountSettings,saveAccountSettings,maskSettings} from './accountsettings';
 import {platformSettings,savePlatformSettings,maskPlatform} from './platform';
 import type {Ctx} from './context';
 
 const app=express();app.use(express.json({limit:'1mb'}));
-const origins=new Set(['http://127.0.0.1:5173','http://localhost:5173',`http://127.0.0.1:${process.env.VITE_PORT??5173}`,'http://127.0.0.1:3001',...(process.env.ALLOWED_ORIGINS??'').split(',').filter(Boolean)]);
+app.set('trust proxy',true);
 app.get('/api/health',(_req,res)=>res.json({ok:true}));
 
 const cors=(req:express.Request,res:express.Response)=>{
  const origin=req.headers.origin;
- if(!origin)return true;
- if(!origins.has(origin)){res.status(403).json({error:'Недопустимый источник запроса'});return false;}
- res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');
- res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type');
- res.setHeader('Access-Control-Allow-Methods','GET, POST, OPTIONS');
+ if(!originAllowed(origin,req)){res.status(403).json({error:'Недопустимый источник запроса'});return false;}
+ if(origin){
+  res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');
+  res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type');
+  res.setHeader('Access-Control-Allow-Methods','GET, POST, OPTIONS');
+ }
  return true;
 };
 app.use('/api',(req,res,next)=>{if(!cors(req,res))return;if(req.method==='OPTIONS')return res.sendStatus(204);next();});
@@ -63,6 +67,18 @@ app.post('/api/domains/:id/check',route((c,i)=>operations.checkDomain(c,i)));
 app.post('/api/replies',route((c,i)=>operations.recordReply(c,i)));
 app.post('/api/suppress',route((c,i)=>operations.suppress(c,i)));
 app.post('/api/settings/recipients',route((c,i)=>operations.setRecipientMode(c,i)));
+app.get('/api/geo',(_req,res)=>res.json({countries,regions}));
+app.get('/api/opportunities',route(ctx=>operations.listOpportunities(ctx)));
+app.post('/api/opportunities/research',route((c,i)=>operations.researchOpportunities(c,i)));
+app.get('/api/markets',route(ctx=>operations.listMarkets(ctx)));
+app.post('/api/markets/research',route((c,i)=>operations.researchMarkets(c,i)));
+app.post('/api/favourites',route((c,i)=>operations.saveFavourite(c,i)));
+app.post('/api/favourites/remove',route((c,i)=>operations.removeFavourite(c,i)));
+app.post('/api/research/campaign',route((c,i)=>operations.createTestFromResearch(c,i),201));
+app.get('/api/threads',route(ctx=>operations.threads(ctx)));
+app.post('/api/threads/action',route((c,i)=>operations.setThreadAction(c,i)));
+app.post('/api/analytics',route((c,i)=>operations.analytics(c,i)));
+app.post('/api/demo',route((c,i)=>operations.setDemo(c,i)));
 app.get('/api/mailboxes/status',route(ctx=>mailboxOperations.status(ctx)));
 app.post('/api/mailboxes/detect',route((c,i)=>mailboxOperations.detect(c,i)));
 app.post('/api/mailboxes/oauth',route((c,i)=>mailboxOperations.startOauth(c,i)));
@@ -85,6 +101,13 @@ app.get('/api/platform',superadminOnly,async(_req,res)=>res.json(maskPlatform(aw
 app.post('/api/platform',superadminOnly,async(req,res)=>res.json(await savePlatformSettings(req.body)));
 app.get('/api/accounts',superadminOnly,async(_req,res)=>res.json(await listAccounts()));
 app.post('/api/accounts/decide',superadminOnly,async(req,res)=>res.json(await decideAccount(req.account!,req.body)));
+/** Support view. A superadmin may look at an account's workspace and may not change it: this is
+    the only route that reads another account, it is a GET, and every use is written to a log the
+    superadmin cannot reach through the interface. Nothing here hands out a session for that
+    account, so no mutating route can ever run as somebody else. */
+app.get('/api/accounts/:id/workspace',superadminOnly,async(req,res)=>
+ res.json(await supportView(req.account!,String(req.params.id))));
+app.get('/api/support-log',superadminOnly,async(_req,res)=>res.json(await supportLog()));
 
 app.post('/api/send',(_req,res)=>res.status(409).json({error:'Отправка не подключена. Требуются проверенный почтовый провайдер, версионированные правила юрисдикций и подтверждение первой партии.'}));
 mountMailboxCallback(app);

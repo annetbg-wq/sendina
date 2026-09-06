@@ -5,6 +5,8 @@ import {createRemoteJWKSet,jwtVerify} from 'jose';
 import {z} from 'zod';
 import {timingSafeEqual} from 'node:crypto';
 import {operations} from './operations';
+import {countries,regions} from './geo';
+import {RESULTS} from './research';
 import {mailboxOperations} from './mailboxes';
 import {oauthEnabled,publicUrl,resourceUrl,verifyLocalToken} from './oauth';
 import {findAccount,ensureAccount} from './accounts';
@@ -16,7 +18,7 @@ export function mountMcp(app:Express){
  const jwks=process.env.OAUTH_JWKS_URL?createRemoteJWKSet(new URL(process.env.OAUTH_JWKS_URL)):null;
  const authorizationServers=()=>oauthEnabled()?[publicUrl()]:issuer?[issuer]:[];
  const method=()=>oauthEnabled()?'OAuth 2.1':issuer&&jwks?'OAuth 2.1 (внешний провайдер)':process.env.MCP_TOKEN?'Токен разработчика':'Не настроено';
- const tools=['get_capabilities','get_dashboard','list_campaigns','get_campaign','create_campaign','find_recipients','import_contacts','confirm_recipient','prepare_messages','launch_preview','set_control_mode','approve_first_batch','set_campaign_status','record_reply','exclude_recipient','emergency_stop','list_opportunities','list_mailboxes','verify_mailbox','sync_replies','test_mailbox'];
+ const tools=['get_capabilities','get_dashboard','list_campaigns','get_campaign','create_campaign','find_recipients','import_contacts','confirm_recipient','prepare_messages','launch_preview','set_control_mode','approve_first_batch','set_campaign_status','record_reply','exclude_recipient','emergency_stop','list_mailboxes','verify_mailbox','sync_replies','test_mailbox','research_opportunities','list_opportunities','research_markets_by_country','research_markets_by_niche','assess_market','list_markets','save_favourite','remove_favourite','create_test_from_research','list_threads','get_thread','set_thread_action','get_analytics','list_locations'];
 
  app.get(['/.well-known/oauth-protected-resource','/.well-known/oauth-protected-resource/mcp'],(_req,res)=>
   res.json({resource:resourceUrl(),authorization_servers:authorizationServers(),scopes_supported:['sendina:read','sendina:write'],bearer_methods_supported:['header'],resource_name:'Sendina'}));
@@ -74,7 +76,6 @@ export function mountMcp(app:Express){
   register('get_capabilities','Which model, search provider and recipient mode this workspace uses.',{},false,true,()=>operations.capabilities(account));
   register('get_dashboard','Workspace metrics: campaigns, recipients, messages, replies and readiness.',{},false,true,()=>operations.dashboard(account));
   register('list_campaigns','List campaigns in the authenticated workspace.',{},false,true,()=>operations.listCampaigns(account));
-  register('list_opportunities','List sample hypotheses; scores are not verified research.',{},false,true,()=>operations.listOpportunities(account));
   register('get_campaign','Read a campaign with its recipients, drafts, replies and duplicate addresses.',{id:z.string()},false,true,a=>operations.getCampaign(account,a));
   register('create_campaign','Create a draft campaign. Never sends email.',
    {name:z.string().min(3).max(150),market:z.string(),goal:z.string(),context:z.string().min(10).max(5000),event:z.string()},true,false,a=>operations.createCampaign(account,a));
@@ -106,6 +107,49 @@ export function mountMcp(app:Express){
   register('test_mailbox','Send one real test message through a connected mailbox. Readiness depends on it.',
    {email:z.email(),to:z.email().optional()},true,false,a=>mailboxOperations.testSend(account,a));
   register('emergency_stop','Stop all campaigns or lift the stop. Lifting does not resume campaigns.',{stopped:z.boolean()},true,true,a=>operations.emergencyStop(account,a));
+
+  // Research, favourites, threads and analytics reach the same operations the screens call, so a
+  // search started in a chat is the search the "Возможности" screen shows, with the same ids.
+  const location={countries:z.array(z.string()).optional(),region:z.string().optional(),
+   city:z.string().optional(),auto:z.boolean().optional()};
+  register('list_locations','Countries and regions a campaign or a search may target.',{},false,true,
+   async()=>({countries,regions}));
+  register('research_opportunities',`Find exactly ${RESULTS} current opportunities for a location and an industry. Replaces the previous opportunity search in this workspace, which is what the Opportunities screen then shows.`,
+   {location:z.object(location).optional(),industry:z.string().optional(),note:z.string().optional()},
+   true,false,a=>operations.researchOpportunities(account,a));
+  register('list_opportunities','The current opportunity search and the kept favourites of this workspace.',{},false,true,
+   ()=>operations.listOpportunities(account));
+  register('research_markets_by_country',`Given a country, region or city, return the ${RESULTS} most promising niches for it.`,
+   {location:z.object(location)},true,false,a=>operations.researchMarkets(account,{...a,mode:'country'}));
+  register('research_markets_by_niche',`Given a niche, product or direction, return the ${RESULTS} most promising countries or regions for it.`,
+   {niche:z.string()},true,false,a=>operations.researchMarkets(account,{...a,mode:'niche'}));
+  register('assess_market','Score one chosen combination of location and niche, without proposing alternatives.',
+   {location:z.object(location),niche:z.string()},true,false,a=>operations.researchMarkets(account,{...a,mode:'manual'}));
+  register('list_markets','The current market research and the kept market favourites.',{},false,true,
+   ()=>operations.listMarkets(account));
+  register('save_favourite','Keep one researched opportunity or market. Nothing is kept automatically.',
+   {id:z.string()},true,true,a=>operations.saveFavourite(account,a));
+  register('remove_favourite','Remove one kept opportunity or market.',{id:z.string()},true,true,
+   a=>operations.removeFavourite(account,a));
+  register('create_test_from_research','Create an ordinary draft campaign from a researched opportunity or market, whether it is in the current results or in the favourites.',
+   {id:z.string(),control:z.enum(['auto','confirm','manual']).optional()},true,false,
+   a=>operations.createTestFromResearch(account,a));
+  register('list_threads','One entry per recipient: the last reply, the classification, the status and the recommended next action.',
+   {},false,true,()=>operations.threads(account));
+  register('get_thread','The whole conversation with one recipient: every outgoing letter, every reply, in order.',
+   {email:z.email()},false,true,async(a:any)=>{
+    const all=await operations.threads(account) as any;
+    const thread=all.threads.find((t:any)=>t.email===String(a.email).toLowerCase());
+    if(!thread)throw Error('Переписки с этим адресатом нет');
+    return thread;});
+  register('set_thread_action','Record how a conversation ended and whether the recommended next action was carried out.',
+   {email:z.email(),done:z.boolean().optional(),
+    outcome:z.enum(['meeting','documents','interest','later','refused','unsubscribed','bounced','none','other']).optional()},
+   true,true,a=>operations.setThreadAction(account,a));
+  register('get_analytics','Workspace metrics for a period and a campaign selection, with the change against the previous period of the same length.',
+   {period:z.enum(['today','yesterday','7d','30d','90d','all','custom']).optional(),
+    from:z.string().optional(),to:z.string().optional(),campaign:z.string().optional()},
+   false,true,a=>operations.analytics(account,a));
 
   const transport=new StreamableHTTPServerTransport({sessionIdGenerator:undefined,enableJsonResponse:true});
   res.on('close',()=>{void transport.close();void server.close();});
