@@ -533,6 +533,70 @@ IMAP порт|IMAP port
 Тоже обычно настраивает администратор платформы. Запасной вариант — своё приложение Entra ID со scope Mail.Send, Mail.Read и offline_access.|Normally set up by the platform administrator as well. The fallback is your own Entra ID application with the Mail.Send, Mail.Read and offline_access scopes.
 Завершите согласие в открывшейся вкладке, затем проверьте ящик|Finish the consent in the new tab, then verify the mailbox
 Демонстрация в браузере: определить провайдера по MX нельзя. Подключите сервер, чтобы Sendina сделала это сама.|Browser demo: MX records cannot be read here. Connect a server and Sendina works the provider out itself.
+Рекомендуем|Recommended
+Сделать всё за меня|Do it all for me
+Опишите продукт и цель. Sendina сама найдёт компании и адресатов, проверит источники и подготовит персональные письма.|Describe the product and the goal. Sendina finds the companies and the people, checks the sources and writes each message.
+От вас: описание продукта и подтверждение первой партии.|From you: a description of the product and approval of the first batch.
+Начать|Start
+У меня уже есть адресаты|I already have recipients
+Загрузите свои контакты. Поиск компаний пропускается, всё остальное — проверка, письма, правила, ответы — работает так же.|Bring your own contacts. Company research is skipped; the checks, the messages, the rules and the replies work exactly the same.
+От вас: список адресатов с источником и причиной обращения.|From you: a list of recipients with a source and a reason for writing.
+Загрузить контакты|Load contacts
+Настроить вручную|Set it up myself
+Полный контроль: источники, подключение почты, правила отправки, адресаты и письма по отдельности.|Full control: sources, mail connection, sending rules, recipients and messages one by one.
+От вас: настройка каждого шага самостоятельно.|From you: every step configured by hand.
+Открыть рассылки|Open campaigns
+Запуск кампании|Campaign launch
+Четыре вопроса — и Sendina сама найдёт компании, адресатов и подготовит письма.|Four questions, and Sendina finds the companies and the people and writes the messages.
+Опишите предложение, чтобы письма были персональными. Адресатов вы добавите на следующем шаге.|Describe the offer so the messages can be personal. You add the recipients on the next step.
+Что продаём|What are we selling
+Какую проблему это решает|What problem does it solve
+Чего хотим добиться|What do we want
+Целевое событие|Target event
+Где ищем|Where to look
+Пусть Sendina порекомендует|Let Sendina recommend
+Продажа услуги|Selling a service
+Поиск инвесторов|Finding investors
+Найм|Hiring
+Обращение|An official request
+Демонстрация|A demonstration
+Рынок:|Market:
+Sendina найдёт реальные организации, проверит источники и оставит адресатом только того, чей адрес подтверждается источником.|Sendina finds real organisations, checks the sources, and keeps as a recipient only someone whose address the source supports.
+Добавить своих|Add my own
+Вставьте адресатов списком JSON. Для каждого нужны источник, основание и конкретная причина обращения — без причины письмо будет помечено как спам.|Paste the recipients as a JSON list. Each needs a source, a legal ground and a specific reason for writing; without a reason the message is marked as bulk mail.
+Проверить и показать письма|Check them and show the messages
+Поиск по реальным организациям|Search over real organisations
+Ниже — первые письма целиком.|The first messages are shown in full below.
+Подходящих адресатов пока нет.|No suitable recipients yet.
+Почему выбран:|Why this one:
+Доказательство:|Evidence:
+адрес не подтверждён|address not verified
+Как запускаем|How we launch
+Подтвердить первую партию|Approve the first batch
+Полностью автоматически|Fully automatic
+Полностью вручную|Fully by hand
+Отправитель не подключён. Правила не пропустят отправку, пока ящик не подключён и не проверен.|No sender is connected. The rules will not allow sending until a mailbox is connected and verified.
+Подключить отправителя|Connect a sender
+Подтвердить и запустить|Approve and launch
+Оставить черновиком|Leave it as a draft
+Кампания запущена. Отправка пойдёт в рамках правил.|The campaign is running. Sending stays inside the rules.
+Настройки определены автоматически|Settings were detected automatically
+Показать и изменить вручную|Show them and change by hand
+Инфраструктура поиска и модели|Search and model infrastructure
+Заполненное здесь работает для всех аккаунтов, и обычному пользователю не придётся вводить ни одного ключа.|What is filled in here works for every account, and an ordinary person never has to enter a key.
+Ключ модели|Model key
+Поиск в интернете|Web search
+Ключ поиска|Search key
+Поиск организаций|Organisation search
+Ключ поиска организаций|Organisation search key
+Сохранить настройки платформы|Save the platform settings
+Модель и поиск уже предоставлены Sendina — заполнять ничего не нужно. Эти поля пригодятся, только если вы хотите работать на своих ключах.|Sendina already provides the model and the search, so there is nothing to fill in. These fields only matter if you would rather use your own keys.
+Ключи модели и поиска пока не настроены администратором. Их можно указать здесь, для своего аккаунта.|An administrator has not set up the model and search yet. You can supply them here for your own account.
+Обычно ключ предоставляет Sendina, и заполнять это поле не нужно. Укажите свой, только если хотите работать на собственном ключе.|Sendina normally provides the key and this field can stay empty. Fill it in only to work on your own key.
+Тоже обычно предоставлено платформой. Свой ключ поиска нужен, только если вы хотите отделить свои запросы от общих.|Normally provided by the platform as well. Your own search key only matters if you want your queries kept separate.
+Нужно подтверждение первой партии|The first batch is not approved yet
+Отправка только вручную|Sending is fully by hand
+Режим контроля|Control mode
 `;
 export const dictionary:Record<string,string>=Object.fromEntries(pairs.trim().split('\n').map(line=>line.split('|')));
 const ordered=Object.keys(dictionary).filter(k=>/[А-Яа-яЁё]/.test(k)).sort((a,b)=>b.length-a.length);

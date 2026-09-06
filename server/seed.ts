@@ -11,11 +11,11 @@ export const box=(email:string)=>({email,provider:'unknown' as string,workspace:
 
 export const seed = () => ({
   demo:true, stopped:false,
-  settings:{recipientMode:'auto' as 'auto'|'search'|'proposal'},
+  settings:{recipientMode:'auto' as 'auto'|'organisations'|'search'|'proposal'},
   campaigns:[
-    {id:'c1',name:'Продажи бутик-гостиниц в Европе',market:'США',goal:'Продажа услуги',context:'Автоматизация работы небольшого отеля',event:'Встреча',status:'active',sent:392,positive:24,value:2400},
-    {id:'c2',name:'Поиск партнёров для внедрения',market:'Великобритания',goal:'Партнёрство',context:'Совместное внедрение решений',event:'Положительный ответ',status:'active',sent:325,positive:13,value:1300},
-    {id:'c3',name:'Решение официального запроса',market:'ОАЭ',goal:'Обращение',context:'Получение документов',event:'Получение документа',status:'paused',sent:218,positive:7,value:0}
+    {id:'c1',name:'Продажи бутик-гостиниц в Европе',market:'США',goal:'Продажа услуги',context:'Автоматизация работы небольшого отеля',event:'Встреча',status:'active',sent:392,positive:24,value:2400,control:'confirm' as 'auto'|'confirm'|'manual',firstBatchApprovedAt:null as string|null},
+    {id:'c2',name:'Поиск партнёров для внедрения',market:'Великобритания',goal:'Партнёрство',context:'Совместное внедрение решений',event:'Положительный ответ',status:'active',sent:325,positive:13,value:1300,control:'confirm' as 'auto'|'confirm'|'manual',firstBatchApprovedAt:null as string|null},
+    {id:'c3',name:'Решение официального запроса',market:'ОАЭ',goal:'Обращение',context:'Получение документов',event:'Получение документа',status:'paused',sent:218,positive:7,value:0,control:'confirm' as 'auto'|'confirm'|'manual',firstBatchApprovedAt:null as string|null}
   ],
   domains:[
     {id:'d1',name:'hotelflow.example',limit:180,used:112,dns:noDns(),mailboxes:[box('outreach@hotelflow.example'),box('partners@hotelflow.example')]},
@@ -35,6 +35,10 @@ export const seed = () => ({
 /** Older stored workspaces kept mailboxes as plain strings and no DNS block. */
 export function normalize(s:any){
   s.settings??={recipientMode:'auto'};
+  for(const c of s.campaigns??[]){
+    c.control??='confirm';
+    c.firstBatchApprovedAt??=null;
+  }
   for(const d of s.domains??[]){
     d.dns??=noDns();
     d.mailboxes=(d.mailboxes??[]).map((m:any)=>{

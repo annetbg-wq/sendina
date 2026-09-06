@@ -4,13 +4,17 @@ import {z} from 'zod';
 import {read,change,pool} from './store';
 import type {Ctx} from './context';
 import {accountSettings,maskSettings} from './accountsettings';
+import {infrastructure} from './resolve';
+import {placesReady,placesProvider} from './places';
 import {policy,isBulk} from './policy';
 import {findRecipients,resolveMode} from './recipients';
-import {aiReady,aiModel} from './ai';
+import {aiReady,aiModel,complete} from './ai';
 import {searchReady,searchProvider} from './search';
 import {noDns,box,type State} from './seed';
 import {domainReadiness,mailboxReadiness} from './readiness';
 
+/** The closed set of markets a campaign may target, shared with the interface. */
+export const markets=['США','Германия','Испания','Австралия','Великобритания','ОАЭ'];
 const audit=(s:State,action:string)=>s.audit.unshift({id:randomUUID(),at:new Date().toISOString(),action});
 const campaignOf=(s:State,id:string)=>{const c=s.campaigns.find(c=>c.id===id);if(!c)throw Error('Кампания не найдена');return c;};
 
@@ -32,6 +36,8 @@ const decide=(s:State,c:any,p:any,duplicates:string[],sender:any)=>policy({
  basis:p.basis??'',contactReason:p.reason??'',
  sourceVerified:p.verification==='verified',
  duplicate:duplicates.includes(p.email),
+ control:(c.control??'confirm') as 'auto'|'confirm'|'manual',
+ firstBatchApproved:Boolean(c.firstBatchApprovedAt),
  verified:Boolean(sender),used:sender?.used??0,limit:sender?.limit??0
 });
 
@@ -43,32 +49,43 @@ const compose=(c:any,p:any)=>isBulk(p.reason??'')
 const contactInput=z.object({email:z.email(),name:z.string().min(1),company:z.string().min(1),source:z.url(),basis:z.string().min(3),reason:z.string().min(10)});
 
 export const schemas={
- createCampaign:z.object({name:z.string().min(3).max(150),market:z.string().min(1),goal:z.string().min(1),context:z.string().min(10).max(5000),event:z.string().min(1)}),
+ createCampaign:z.object({name:z.string().min(3).max(150),market:z.string().min(1),goal:z.string().min(1),
+  context:z.string().min(10).max(5000),event:z.string().min(1),
+  control:z.enum(['auto','confirm','manual']).default('confirm')}),
+ control:z.object({id:z.string().min(1),control:z.enum(['auto','confirm','manual'])}),
+ approve:z.object({id:z.string().min(1)}),
  campaignId:z.object({id:z.string().min(1)}),
  setStatus:z.object({id:z.string().min(1),status:z.enum(['active','paused','draft'])}),
  stop:z.object({stopped:z.boolean()}),
  mailbox:z.object({email:z.email()}),
  domainCheck:z.object({id:z.string().min(1),selector:z.string().regex(/^[a-zA-Z0-9_-]{1,63}$/).default('default')}),
  importContacts:z.object({id:z.string().min(1),contacts:z.array(contactInput).min(1).max(1000)}),
- findRecipients:z.object({id:z.string().min(1),count:z.number().int().min(1).max(50).default(20),mode:z.enum(['auto','search','proposal']).optional()}),
+ findRecipients:z.object({id:z.string().min(1),count:z.number().int().min(1).max(50).default(20),mode:z.enum(['auto','organisations','search','proposal']).optional()}),
  confirmRecipient:z.object({contactId:z.string().min(1),email:z.email(),source:z.url(),evidence:z.string().min(10)}),
- prepare:z.object({id:z.string().min(1),limit:z.number().int().min(1).max(50).default(5)}),
+ prepare:z.object({id:z.string().min(1),limit:z.number().int().min(1).max(50).default(5),
+  /** A review happens before launch, so it asks what the rules would say once the campaign runs. */
+  asIfRunning:z.boolean().default(false)}),
  reply:z.object({campaignId:z.string().min(1),email:z.email(),text:z.string().min(1),eventId:z.string().min(1),
   category:z.enum(['positive','neutral','objection','referral','later','unsubscribe','negative','automatic','bounce'])}),
  suppress:z.object({email:z.email()}),
- recipientMode:z.object({mode:z.enum(['auto','search','proposal'])})
+ recipientMode:z.object({mode:z.enum(['auto','organisations','search','proposal'])})
 };
 
 export const operations={
  state:(ctx:Ctx)=>read(ctx.accountId),
 
- capabilities:async(ctx:Ctx)=>{const s=await read(ctx.accountId);const config=await accountSettings(ctx.accountId);
+ capabilities:async(ctx:Ctx)=>{const s=await read(ctx.accountId);
+  const config=await infrastructure(ctx.accountId);
+  const own=await accountSettings(ctx.accountId);
   const setting=s.settings?.recipientMode??'auto';return {
   account:{email:ctx.email,role:ctx.role},
   ai:{ready:aiReady(config),model:aiReady(config)?aiModel(config):''},
   search:{ready:searchReady(config),provider:searchProvider(config)},
-  recipients:{setting,effective:resolveMode(setting,searchReady(config))},
-  connections:maskSettings(config),
+  organisations:{ready:placesReady(config),provider:placesProvider(config)},
+  /** Which side supplies each capability, so nobody is asked for a key the platform already has. */
+  provided:config.source,
+  recipients:{setting,effective:resolveMode(setting,searchReady(config),placesReady(config))},
+  connections:maskSettings(own),
   storage:{postgres:Boolean(pool),durable:Boolean(pool)},
   sendingEnabled:false};},
 
@@ -86,8 +103,9 @@ export const operations={
  listOpportunities:async(ctx:Ctx)=>({demo:true,opportunities:(await read(ctx.accountId)).opportunities}),
 
  createCampaign:(ctx:Ctx,input:unknown)=>{const body=schemas.createCampaign.parse(input);
-  return change(ctx.accountId,s=>{const c={...body,id:randomUUID(),status:'draft',sent:0,positive:0,value:0};
-   s.campaigns.unshift(c);audit(s,`Создана кампания «${c.name}»`);return c;});},
+  return change(ctx.accountId,s=>{const c={...body,id:randomUUID(),status:'draft',sent:0,positive:0,value:0,
+    firstBatchApprovedAt:null as string|null};
+   s.campaigns.unshift(c);audit(s,`Создана кампания «${c.name}» (контроль: ${c.control})`);return c;});},
 
  setCampaignStatus:(ctx:Ctx,input:unknown)=>{const {id,status}=schemas.setStatus.parse(input);
   return change(ctx.accountId,s=>{const c=campaignOf(s,id);
@@ -132,7 +150,7 @@ export const operations={
  findRecipients:async(ctx:Ctx,input:unknown)=>{const {id,count,mode}=schemas.findRecipients.parse(input);
   const before=await read(ctx.accountId);const campaign=campaignOf(before,id);
   const setting=mode??before.settings?.recipientMode??'auto';
-  const result=await findRecipients(campaign,setting,count,await accountSettings(ctx.accountId));
+  const result=await findRecipients(campaign,setting,count,await infrastructure(ctx.accountId));
   return change(ctx.accountId,s=>{campaignOf(s,id);let added=0,skipped=0;
    for(const c of result.candidates){
     const email=c.email?.toLowerCase()??null;
@@ -154,7 +172,7 @@ export const operations={
    audit(s,`Адресат подтверждён: ${email}`);return p;});},
 
  /** Prepares drafts and a policy decision per recipient. Repeating it never duplicates a draft. */
- prepareMessages:(ctx:Ctx,input:unknown)=>{const {id,limit}=schemas.prepare.parse(input);
+ prepareMessages:(ctx:Ctx,input:unknown)=>{const {id,limit,asIfRunning}=schemas.prepare.parse(input);
   return change(ctx.accountId,s=>{const c=campaignOf(s,id);const duplicates=duplicateEmails(s,id);
    const sender=senderDomain(s);
    const contacts=s.contacts.filter(p=>p.campaignId===id).slice(0,limit);
@@ -164,7 +182,56 @@ export const operations={
     else Object.assign(m,{subject:draft.subject,text:draft.text,bulk:draft.bulk});
     return {...m,name:p.name,company:p.company,source:p.source,reason:p.reason,evidence:p.evidence,
      verification:p.verification,confidence:p.confidence,origin:p.origin,
-     sender:sender?.name??'',policy:decide(s,c,p,duplicates,sender)};});});},
+     sender:sender?.name??'',policy:decide(s,asIfRunning?{...c,status:'active'}:c,p,duplicates,sender)};});});},
+
+ /** Recommends a market from the product description, so "let Sendina choose" is a real answer
+     and not a silent default. The operator can always override it. */
+ recommendMarket:async(ctx:Ctx,input:unknown)=>{
+  const body=z.object({context:z.string().min(10).max(5000),goal:z.string().min(1).max(200)}).parse(input);
+  const config=await infrastructure(ctx.accountId);
+  const answer=await complete({name:'market_recommendation',config,
+   schema:z.object({market:z.enum(markets as [string,...string[]]),why:z.string().min(10).max(400)}),
+   system:'Ты выбираешь рынок для первой кампании из закрытого списка. Отвечай только JSON.',
+   user:`Продукт и контекст: ${body.context}\n\nЦель: ${body.goal}\n\nДоступные рынки: ${markets.join(', ')}.\n\nВыбери один и объясни выбор одним предложением.`});
+  return answer;},
+
+ /** How much of the first sending the operator wants to see before it happens. */
+ setControlMode:(ctx:Ctx,input:unknown)=>{const {id,control}=schemas.control.parse(input);
+  return change(ctx.accountId,s=>{const c=campaignOf(s,id);
+   c.control=control;
+   if(control!=='confirm')c.firstBatchApprovedAt=null;
+   audit(s,`Режим контроля «${c.name}»: ${control}`);
+   return {id:c.id,control,firstBatchApprovedAt:c.firstBatchApprovedAt};});},
+
+ /** Approving the first batch is what lifts FIRST_BATCH_APPROVAL_REQUIRED. */
+ approveFirstBatch:(ctx:Ctx,input:unknown)=>{const {id}=schemas.approve.parse(input);
+  return change(ctx.accountId,s=>{const c=campaignOf(s,id);
+   if((c.control??'confirm')!=='confirm')throw Error('Подтверждение первой партии нужно только в режиме «подтвердить первую партию».');
+   c.firstBatchApprovedAt=new Date().toISOString();
+   audit(s,`Первая партия «${c.name}» подтверждена оператором.`);
+   return {id:c.id,firstBatchApprovedAt:c.firstBatchApprovedAt};});},
+
+ /** What the operator must see before anything is sent: real recipients with their organisation,
+     role, source, evidence, the reason they were chosen, and the letter each would receive.
+     It reads the same rows the campaign already holds; nothing is stored twice. */
+ launchPreview:async(ctx:Ctx,input:unknown)=>{const {id,limit}=schemas.prepare.parse(input);
+  const messages=await operations.prepareMessages(ctx,{id,limit,asIfRunning:true}) as any[];
+  const s=await read(ctx.accountId);
+  const campaign=campaignOf(s,id);
+  const contacts=s.contacts.filter(p=>p.campaignId===id);
+  return {
+   campaign:{id:campaign.id,name:campaign.name,market:campaign.market,goal:campaign.goal,
+    event:campaign.event,status:campaign.status,control:campaign.control??'confirm',
+    firstBatchApprovedAt:campaign.firstBatchApprovedAt??null},
+   recipients:contacts.length,
+   verified:contacts.filter(p=>p.verification==='verified').length,
+   sample:messages.map(m=>{
+    const p=contacts.find(c=>c.id===m.contactId);
+    return {contactId:m.contactId,name:p?.name??m.name,company:p?.company??'',role:p?.role??'',
+     country:p?.country??'',email:m.email,source:m.source,evidence:p?.evidence??'',
+     reason:m.reason,confidence:p?.confidence??0,verification:m.verification,origin:p?.origin??'',
+     subject:m.subject,text:m.text,bulk:m.bulk,policy:m.policy};})
+  };},
 
  recordReply:(ctx:Ctx,input:unknown)=>{const body=schemas.reply.parse(input);
   return change(ctx.accountId,s=>{const existing=s.replies.find(r=>r.id===body.eventId);if(existing)return existing;
@@ -181,8 +248,8 @@ export const operations={
    audit(s,`Глобальное исключение: ${email}`);return {ok:true,email};});},
 
  setRecipientMode:async(ctx:Ctx,input:unknown)=>{const {mode}=schemas.recipientMode.parse(input);
-  const available=searchReady(await accountSettings(ctx.accountId));
+  const config=await infrastructure(ctx.accountId);
   return change(ctx.accountId,s=>{s.settings={...s.settings,recipientMode:mode};
-   audit(s,`Режим поиска адресатов: ${mode}`);return {mode,effective:resolveMode(mode,available)};});}
+   audit(s,`Режим поиска адресатов: ${mode}`);return {mode,effective:resolveMode(mode,searchReady(config),placesReady(config))};});}
 };
 export type Operations=typeof operations;

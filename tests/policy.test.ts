@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {policy,isBulk} from '../server/policy';
 import {bindAddress,publicAddress,resourceAddress} from '../server/config';
-const valid={stopped:false,status:'active',suppressed:false,replied:false,basis:'documented consent',contactReason:'They published a request for this integration',sourceVerified:true,duplicate:false,verified:true,used:10,limit:100};
+const valid={stopped:false,status:'active',suppressed:false,replied:false,basis:'documented consent',contactReason:'They published a request for this integration',sourceVerified:true,duplicate:false,control:'auto' as const,firstBatchApproved:false,verified:true,used:10,limit:100};
 test('emergency stop overrides all other decisions',()=>assert.equal(policy({...valid,stopped:true}).reason,'EMERGENCY_STOP'));
 test('global exclusions block recipients across campaigns',()=>assert.equal(policy({...valid,suppressed:true}).reason,'GLOBAL_SUPPRESSION'));
 test('reply stops follow-ups',()=>assert.equal(policy({...valid,replied:true}).reason,'REPLY_RECEIVED'));
@@ -11,8 +11,18 @@ test('unverified domain and missing contact grounds block',()=>{assert.equal(pol
 test('a recipient without a specific reason is treated as bulk mail',()=>{assert.equal(policy({...valid,contactReason:'   '}).reason,'CONTACT_REASON_REQUIRED');assert.ok(isBulk(''));assert.ok(!isBulk('a concrete reason'));});
 test('an unverified source blocks before the domain is even considered',()=>assert.equal(policy({...valid,sourceVerified:false}).reason,'SOURCE_UNVERIFIED'));
 test('an address repeated across campaigns is blocked',()=>assert.equal(policy({...valid,duplicate:true}).reason,'DUPLICATE_RECIPIENT'));
+test('a control mode holds sending back until the operator has looked',()=>{
+  assert.equal(policy({...valid,control:'manual'}).reason,'MANUAL_APPROVAL_REQUIRED');
+  assert.equal(policy({...valid,control:'confirm'}).reason,'FIRST_BATCH_APPROVAL_REQUIRED');
+  assert.equal(policy({...valid,control:'confirm',firstBatchApproved:true}).decision,'allow');
+  // Approving a batch never overrides an earlier objection.
+  assert.equal(policy({...valid,control:'confirm',firstBatchApproved:true,suppressed:true}).reason,'GLOBAL_SUPPRESSION');
+  // A review must still see the recipient's own problems, so those are reported first.
+  assert.equal(policy({...valid,control:'confirm',sourceVerified:false}).reason,'SOURCE_UNVERIFIED');
+  assert.equal(policy({...valid,control:'manual',contactReason:''}).reason,'CONTACT_REASON_REQUIRED');
+});
 test('a paused campaign blocks before any recipient detail matters',()=>assert.equal(policy({...valid,status:'draft',duplicate:true,sourceVerified:false}).reason,'CAMPAIGN_PAUSED'));
-test('allowed decisions retain version and timestamp',()=>{const d=policy(valid);assert.equal(d.decision,'allow');assert.equal(d.version,'1.1');assert.ok(Date.parse(d.at));});
+test('allowed decisions retain version and timestamp',()=>{const d=policy(valid);assert.equal(d.decision,'allow');assert.equal(d.version,'1.2');assert.ok(Date.parse(d.at));});
 
 test('a public bind address is refused without an access token', () => {
   assert.deepEqual(bindAddress({}), {host: '127.0.0.1', port: 3001, loopback: true});

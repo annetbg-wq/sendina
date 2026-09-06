@@ -1,14 +1,15 @@
 import {z} from 'zod';
 import {complete,aiReady,type AiConfig} from './ai';
 import {search,searchReady,emailsIn,type Hit,type SearchConfig} from './search';
+import {findOrganisations,evidenced,placesReady,domainOf,type Organisation,type PlacesConfig} from './places';
 
 export type Candidate={
  name:string;company:string;role:string;country:string;
  email:string|null;source:string|null;evidence:string;
  basis:string;reason:string;confidence:number;
- verification:'verified'|'unverified';origin:'search'|'proposal';
+ verification:'verified'|'unverified';origin:'search'|'proposal'|'organisations';
 };
-export type FindResult={mode:'search'|'proposal';profile:string;candidates:Candidate[];queries:string[];notes:string[]};
+export type FindResult={mode:'organisations'|'search'|'proposal';profile:string;candidates:Candidate[];queries:string[];notes:string[];organisations?:{name:string;website:string;country:string;fit:number;why:string}[]};
 
 const candidateSchema=z.object({
  name:z.string().min(1).max(120),company:z.string().min(1).max(160),role:z.string().min(1).max(160),
@@ -46,22 +47,94 @@ async function fromSearch(campaign:any,count:number,config:ResearchConfig,signal
  const corpus=hits.map((h,i)=>`[${i+1}] ${h.title}\n${h.url}\n${h.snippet}`).join('\n\n');
  const found=await complete({name:'candidates',schema:extractSchema,signal,config,system:rules,
   user:`${brief(campaign)}\n\nНиже результаты веб-поиска. Отбери до ${count} адресатов, подходящих цели.\n\n${corpus}`});
+ const {candidates,notes:checks}=keepEvidenced(found.candidates,hits,'search');
+ notes.push(...checks);
+ return {mode:'search',profile:plan.profile,queries:plan.queries,candidates,notes};
+}
+
+/** The one mechanical guard, shared by every research path: a source the search never returned is
+    dropped, and an address that does not occur in that source is removed rather than believed. */
+function keepEvidenced(found:any[],hits:Hit[],origin:Candidate['origin']){
  const urls=new Set(hits.map(h=>h.url));
  const text=(url:string)=>hits.filter(h=>h.url===url).map(h=>`${h.title} ${h.url} ${h.snippet}`).join(' ');
  const candidates:Candidate[]=[];
+ const notes:string[]=[];
  let droppedSource=0,droppedEmail=0;
- for(const c of found.candidates){
+ for(const c of found){
   if(!c.sourceUrl||!urls.has(c.sourceUrl)){droppedSource++;continue;}
   const email=c.email?.trim().toLowerCase()||null;
   const real=email&&emailsIn(text(c.sourceUrl)).includes(email)?email:null;
   if(email&&!real)droppedEmail++;
   candidates.push({name:c.name,company:c.company,role:c.role,country:c.country,email:real,source:c.sourceUrl,
    evidence:c.evidence,basis:c.basis,reason:c.reason,confidence:c.confidence,
-   verification:real?'verified':'unverified',origin:'search'});
+   verification:real?'verified':'unverified',origin});
  }
  if(droppedSource)notes.push(`Отклонено кандидатов с несуществующей ссылкой: ${droppedSource}.`);
  if(droppedEmail)notes.push(`Адресов, не найденных в источнике, снято: ${droppedEmail}.`);
- return {mode:'search',profile:plan.profile,queries:plan.queries,candidates,notes};
+ return {candidates,notes};
+}
+
+const organisationPlan=z.object({profile:z.string().min(10).max(1200),
+ queries:z.array(z.string().min(3).max(200)).min(1).max(4),
+ roles:z.array(z.string().min(2).max(80)).min(1).max(6)});
+const fitSchema=z.object({organisations:z.array(z.object({
+ name:z.string().min(1).max(200),fit:z.number().min(0).max(100),why:z.string().min(5).max(400)})).max(40)});
+
+/** Organisations first: real companies, then their public pages, then the person and the address.
+    Every step narrows a list that started from something that verifiably exists. */
+async function fromOrganisations(campaign:any,count:number,config:ResearchConfig,signal?:AbortSignal):Promise<FindResult>{
+ const notes:string[]=[];
+ const plan=await complete({name:'organisation_plan',schema:organisationPlan,signal,config,
+  system:'Ты описываешь профиль целевого клиента и составляешь запросы для поиска организаций. Отвечай только JSON.',
+  user:`${brief(campaign)}\n\nОпиши профиль целевого клиента, составь до 4 запросов для поиска подходящих организаций и перечисли роли, с которыми стоит связаться.`});
+
+ // 1. Real organisations.
+ const organisations:Organisation[]=[];
+ for(const query of plan.queries.slice(0,4)){
+  try{for(const o of await findOrganisations(query,config,10,signal))
+   if(!organisations.some(x=>x.name===o.name&&x.website===o.website))organisations.push(o);}
+  catch(e:any){notes.push(`Поиск организаций «${query}»: ${e.message}`);}
+ }
+ const usable=evidenced(organisations);
+ if(!usable.length)throw Error('Поиск организаций не дал компаний с публичным сайтом.');
+ notes.push(`Найдено организаций: ${organisations.length}, с публичным сайтом: ${usable.length}.`);
+
+ // 2. How well each one matches the goal, judged from what the search returned.
+ const scored=await complete({name:'organisation_fit',schema:fitSchema,signal,config,
+  system:'Ты оцениваешь соответствие организаций цели кампании. Отвечай только JSON.',
+  user:`${brief(campaign)}\n\nОцени соответствие каждой организации от 0 до 100 и коротко объясни почему.\n\n`+
+   usable.map((o,i)=>`[${i+1}] ${o.name} — ${o.website} — ${o.address}`).join('\n')});
+ const fitOf=(name:string)=>scored.organisations.find(x=>x.name.toLowerCase()===name.toLowerCase());
+ const ranked=usable.map(o=>({organisation:o,fit:fitOf(o.name)?.fit??0,why:fitOf(o.name)?.why??''}))
+  .filter(x=>x.fit>0).sort((a,b)=>b.fit-a.fit).slice(0,Math.max(count,10));
+ if(!ranked.length)throw Error('Ни одна найденная организация не соответствует цели кампании.');
+
+ // 3. Public pages of those organisations: the role, the person and any published address.
+ const hits:Hit[]=[];
+ if(searchReady(config)){
+  for(const {organisation} of ranked.slice(0,count)){
+   const domain=domainOf(organisation.website);
+   const query=`${domain} ${plan.roles.slice(0,2).join(' OR ')} контакты email`;
+   try{for(const h of await search(query,config,4,signal))
+    if(h.url&&!hits.some(x=>x.url===h.url))hits.push(h);}
+   catch(e:any){notes.push(`Поиск контактов ${domain}: ${e.message}`);}
+  }
+ }else notes.push('Веб-поиск не подключён: адреса на страницах организаций не искались, кандидаты останутся неподтверждёнными.');
+
+ // The organisation website is itself a real source, so it counts alongside the search results.
+ for(const {organisation} of ranked)
+  if(!hits.some(h=>h.url===organisation.website))
+   hits.push({title:organisation.name,url:organisation.website,snippet:`${organisation.name}. ${organisation.address}`});
+
+ const corpus=hits.map((h,i)=>`[${i+1}] ${h.title}\n${h.url}\n${h.snippet}`).join('\n\n');
+ const found=await complete({name:'organisation_candidates',schema:extractSchema,signal,config,system:rules,
+  user:`${brief(campaign)}\n\nРоли, которые нас интересуют: ${plan.roles.join(', ')}.\n\n`+
+   `Ниже страницы найденных организаций. Отбери до ${count} адресатов.\n\n${corpus}`});
+ const {candidates,notes:checks}=keepEvidenced(found.candidates,hits,'organisations');
+ notes.push(...checks);
+ return {mode:'organisations',profile:plan.profile,queries:plan.queries,candidates,notes,
+  organisations:ranked.map(r=>({name:r.organisation.name,website:r.organisation.website,
+   country:r.organisation.country,fit:r.fit,why:r.why}))};
 }
 
 /** Proposal mode: no search key, so nothing may claim an address or a source. */
@@ -74,14 +147,20 @@ async function fromProposal(campaign:any,count:number,config:ResearchConfig,sign
    evidence:c.evidence,basis:c.basis,reason:c.reason,confidence:c.confidence,verification:'unverified' as const,origin:'proposal' as const}))};
 }
 
-export type ResearchConfig=AiConfig&SearchConfig;
-export const resolveMode=(setting:string,searchAvailable:boolean):'search'|'proposal'=>
- setting==='search'?'search':setting==='proposal'?'proposal':searchAvailable?'search':'proposal';
+export type ResearchConfig=AiConfig&SearchConfig&PlacesConfig;
+export type Mode='organisations'|'search'|'proposal';
+/** Automatic picks the strongest evidence available, never a weaker one silently. */
+export const resolveMode=(setting:string,searchAvailable:boolean,organisationsAvailable=false):Mode=>
+ setting==='organisations'?'organisations':setting==='search'?'search':setting==='proposal'?'proposal'
+ :organisationsAvailable?'organisations':searchAvailable?'search':'proposal';
 
 export async function findRecipients(campaign:any,setting:string,count:number,config:ResearchConfig,signal?:AbortSignal):Promise<FindResult>{
- if(!aiReady(config))throw Error('Модель не подключена. Укажите ключ OpenAI в настройках аккаунта.');
- const mode=resolveMode(setting,searchReady(config));
- if(mode==='search'&&!searchReady(config))throw Error('Выбран поиск в интернете, но поисковый API не настроен в аккаунте.');
- const result=mode==='search'?await fromSearch(campaign,count,config,signal):await fromProposal(campaign,count,config,signal);
+ if(!aiReady(config))throw Error('Модель не подключена. Обратитесь к администратору Sendina.');
+ const mode=resolveMode(setting,searchReady(config),placesReady(config));
+ if(mode==='search'&&!searchReady(config))throw Error('Выбран поиск в интернете, но он не подключён.');
+ if(mode==='organisations'&&!placesReady(config))throw Error('Выбран поиск организаций, но он не подключён.');
+ const result=mode==='organisations'?await fromOrganisations(campaign,count,config,signal)
+  :mode==='search'?await fromSearch(campaign,count,config,signal)
+  :await fromProposal(campaign,count,config,signal);
  return {...result,candidates:result.candidates.slice(0,count)};
 }

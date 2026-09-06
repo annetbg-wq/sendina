@@ -17,7 +17,7 @@ const blockers:Record<string,string>={EMERGENCY_STOP:'Аварийная ост�
  INCOMING_MESSAGE_REQUIRED:'Тестовое письмо ещё не прочитано',INCOMING_MESSAGE_FAILED:'Тестовое письмо не пришло',
  DNS_NOT_CHECKED:'DNS не проверялся',SPF_MISSING:'Нет записи SPF',DKIM_MISSING:'Нет записи DKIM',DMARC_MISSING:'Нет записи DMARC'};
 const checkLabels:[string,string][]=[['auth','Вход'],['testSend','Отправка'],['imap','Приём'],['incoming','Чтение письма']];
-const reasons:Record<string,string>={CHECKS_PASSED:'Разрешено правилами',EMERGENCY_STOP:'Аварийная остановка',CAMPAIGN_PAUSED:'Кампания не активна',GLOBAL_SUPPRESSION:'Адресат исключён',REPLY_RECEIVED:'Ответ уже получен',DUPLICATE_RECIPIENT:'Повтор адреса в другой кампании',LEGAL_BASIS_REQUIRED:'Нет правового основания',CONTACT_REASON_REQUIRED:'Нет причины контакта — похоже на спам',SOURCE_UNVERIFIED:'Источник не подтверждён',DOMAIN_UNVERIFIED:'Домен не проверен',DOMAIN_LIMIT:'Исчерпан лимит домена'};
+const reasons:Record<string,string>={CHECKS_PASSED:'Разрешено правилами',EMERGENCY_STOP:'Аварийная остановка',CAMPAIGN_PAUSED:'Кампания не активна',GLOBAL_SUPPRESSION:'Адресат исключён',REPLY_RECEIVED:'Ответ уже получен',DUPLICATE_RECIPIENT:'Повтор адреса в другой кампании',LEGAL_BASIS_REQUIRED:'Нет правового основания',CONTACT_REASON_REQUIRED:'Нет причины контакта — похоже на спам',SOURCE_UNVERIFIED:'Источник не подтверждён',FIRST_BATCH_APPROVAL_REQUIRED:'Нужно подтверждение первой партии',MANUAL_APPROVAL_REQUIRED:'Отправка только вручную',DOMAIN_UNVERIFIED:'Домен не проверен',DOMAIN_LIMIT:'Исчерпан лимит домена'};
 const categories:Record<string,string>={positive:'Положительный',neutral:'Уточнение',objection:'Возражение',referral:'Переадресация',later:'Позже',unsubscribe:'Отписка',negative:'Отказ',automatic:'Автоответ',bounce:'Недоставка'};
 
 function App(){
@@ -32,6 +32,7 @@ function App(){
  const [detection,setDetection]=useState<any>(null);
  const [connector,setConnector]=useState('');
  const [advanced,setAdvanced]=useState(false);
+ const [guided,setGuided]=useState<any>(null);
  useEffect(()=>{localStorage.setItem('sendina-locale',locale);document.documentElement.lang=locale;document.title=locale==='ru'?'Sendina — Монетизатор':'Sendina — Monetizer';},[locale]);
  const [state,setState]=useState<State|null>(null),[page,setPage]=useState('Главная'),[query,setQuery]=useState(''),[modal,setModal]=useState(''),[notice,setNotice]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[selected,setSelected]=useState(''),[preview,setPreview]=useState<any[]>([]),[replyFilter,setReplyFilter]=useState('all'),[menu,setMenu]=useState(false);
  const reload=async()=>{setState(await api('/state'));api('/capabilities').then(c=>{setCaps(c);setAccount(c.account??null);}).catch(()=>setCaps(null));};
@@ -87,8 +88,27 @@ function App(){
  <div className="main-shell"><header className="topbar"><button className="mobile-menu icon-button" aria-label="Открыть меню" onClick={()=>setMenu(!menu)}><Menu/></button><label className="search"><Search size={17}/><input aria-label="Поиск" placeholder="Поиск по рабочей области" value={query} onChange={e=>setQuery(e.target.value)}/><kbd>⌕</kbd></label><div className="top-actions"><button className="locale-switch" aria-label="Язык интерфейса" onClick={()=>setLocale(locale==='ru'?'en':'ru')}><Globe size={14}/>{locale.toUpperCase()}</button><span className={'system '+(state.stopped?'halted':'')}><span className="status-icon">{state.stopped?<Pause size={11}/>:<Check size={11}/>}</span>{state.stopped?'Отправки остановлены':'Демо · отправка отключена'}</span><button className="icon-button notification" aria-label="Журнал уведомлений" onClick={()=>setModal('audit')}><Bell size={20}/><i/></button><button className="profile" onClick={()=>go('Настройки')}><span className="avatar">A</span><ChevronDown size={14}/></button></div></header>
  <main><div className="breadcrumb">Рабочая область <ChevronRight size={12}/> <span>{page}</span></div><div className="page-title"><div><h1>{page==='Главная'?'Что вы хотите получить сегодня?':page}</h1><p>{page==='Главная'?'От первой идеи до измеримого результата — в одной системе.':({Рассылки:'Ваши цели, эксперименты и результаты в одном месте.',Возможности:'Экономические гипотезы для первых небольших тестов.',Рынки:'Сравнивайте страны и выбирайте рынок для следующего запуска.','Домены и почты':'Репутация отправителя — основа устойчивого результата.',Ответы:'Все диалоги и следующие действия вашей команды.',Аналитика:'Оптимизируйте результат, а не количество отправок.',Настройки:'Управление рабочей областью, исключениями и автоматизацией.'} as Record<string,string>)[page]}</p></div>{page==='Главная'?<span className="date">{new Date().toLocaleDateString(locale==='ru'?'ru-RU':'en-US',{day:'numeric',month:'long',year:'numeric'})} <ChevronDown size={13}/></span>:page==='Рассылки'?<button onClick={()=>create()}><Plus size={16}/>Создать рассылку</button>:null}</div>
  {browserDemo()&&<div className="demo-banner"><Info size={14}/>Демо в браузере · данные хранятся на этом устройстве<button className="text-link" onClick={()=>go('Настройки')}>Подключить сервер<ArrowRight size={12}/></button></div>}{error&&<div className="alert error" role="alert">{error}<button className="icon-button" onClick={()=>setError('')} aria-label="Закрыть ошибку"><X size={16}/></button></div>}
- {page==='Главная'&&<><section className="hero-grid"><article className="hero blue"><div className="hero-art"><Target size={60} strokeWidth={1.7}/><span className="spark s1">✦</span><span className="spark s2">✦</span></div><div><span className="eyebrow">ОТ ЦЕЛИ К РЕЗУЛЬТАТУ</span><h2>У меня уже есть цель</h2><p>Найдите клиентов, партнёров или инвесторов.<br/>Запустите рассылку под вашу задачу.</p><button onClick={()=>create()}>Запустить рассылку<ArrowRight size={17}/></button></div></article><article className="hero green"><div className="hero-art"><Search size={61} strokeWidth={1.8}/><span className="spark s1">✦</span><span className="spark s2">✦</span></div><div><span className="eyebrow">ОТ ВОЗМОЖНОСТИ К ПРИБЫЛИ</span><h2>Найти, что выгодно продавать</h2><p>Изучите перспективные идеи и рынки.<br/>Проверьте спрос небольшими рассылками.</p><button className="green-button" onClick={()=>go('Возможности')}>Найти возможности<ArrowRight size={17}/></button></div></article></section>
- <section className="stats"><article className="stat"><div className="stat-icon blue-icon"><ShieldCheck/></div><div><span>Доступно для отправки</span><h2>0 <small>писем</small></h2><p>Подключите и проверьте домен</p></div></article><article className="stat"><div className="stat-icon green-icon"><MessageCircle/></div><div><span>Положительные ответы</span><h2>{positive}</h2><p className="green-text">Из демонстрационных кампаний</p></div></article><article className="stat"><div className="stat-icon purple-icon"><Globe/></div><div><span>Лучший рынок в примере</span><h2 className="text-value"><Flag market="США"/>США</h2><p>24 ответа · конверсия 6,1%</p></div></article><article className="stat"><div className="stat-icon amber-icon"><Star/></div><div><span>Лучшая гипотеза</span><h2 className="text-value">Отели и гостиницы</h2><p>Оценка: <b>92/100</b> · пример</p></div></article></section>
+ {page==='Главная'&&<><section className="scenario-grid">
+ <article className="scenario recommended"><span className="scenario-tag">Рекомендуем</span>
+  <div className="scenario-art blue"><Target size={30} strokeWidth={1.8}/></div>
+  <h2>Сделать всё за меня</h2>
+  <p>Опишите продукт и цель. Sendina сама найдёт компании и адресатов, проверит источники и подготовит персональные письма.</p>
+  <p className="scenario-need">От вас: описание продукта и подтверждение первой партии.</p>
+  <button onClick={()=>{setGuided({step:'brief',mode:'auto'});setModal('guided');}}>Начать<ArrowRight size={15}/></button></article>
+ <article className="scenario">
+  <div className="scenario-art green"><Users size={30} strokeWidth={1.8}/></div>
+  <h2>У меня уже есть адресаты</h2>
+  <p>Загрузите свои контакты. Поиск компаний пропускается, всё остальное — проверка, письма, правила, ответы — работает так же.</p>
+  <p className="scenario-need">От вас: список адресатов с источником и причиной обращения.</p>
+  <button className="secondary" onClick={()=>{setGuided({step:'brief',mode:'contacts'});setModal('guided');}}>Загрузить контакты<ArrowRight size={15}/></button></article>
+ <article className="scenario">
+  <div className="scenario-art amber"><Settings size={30} strokeWidth={1.8}/></div>
+  <h2>Настроить вручную</h2>
+  <p>Полный контроль: источники, подключение почты, правила отправки, адресаты и письма по отдельности.</p>
+  <p className="scenario-need">От вас: настройка каждого шага самостоятельно.</p>
+  <button className="secondary" onClick={()=>go('Рассылки')}>Открыть рассылки<ArrowRight size={15}/></button></article>
+</section>
+<section className="stats"><article className="stat"><div className="stat-icon blue-icon"><ShieldCheck/></div><div><span>Доступно для отправки</span><h2>0 <small>писем</small></h2><p>Подключите и проверьте домен</p></div></article><article className="stat"><div className="stat-icon green-icon"><MessageCircle/></div><div><span>Положительные ответы</span><h2>{positive}</h2><p className="green-text">Из демонстрационных кампаний</p></div></article><article className="stat"><div className="stat-icon purple-icon"><Globe/></div><div><span>Лучший рынок в примере</span><h2 className="text-value"><Flag market="США"/>США</h2><p>24 ответа · конверсия 6,1%</p></div></article><article className="stat"><div className="stat-icon amber-icon"><Star/></div><div><span>Лучшая гипотеза</span><h2 className="text-value">Отели и гостиницы</h2><p>Оценка: <b>92/100</b> · пример</p></div></article></section>
  <div className="dashboard-grid"><div className="column"><section className="card next-action">{header(Target,'Следующее лучшее действие',<span className="ai-label">РЕКОМЕНДАЦИЯ</span>)}<div className="next-body"><ol><li>Создать тест для продукта «Бутик-гостиница»</li><li>Подключить и проверить домен отправителя</li><li>Добавить адресатов с источниками контактов</li><li>Проверить первые персональные письма</li></ol><button className="small-button" onClick={()=>create(state.opportunities[0])}>Применить<ArrowRight size={14}/></button></div><div className="card-note"><Info size={12}/> Первый тест поможет проверить гипотезу без масштабной рассылки</div></section><section className="card">{header(Send,'Активные запуски',<span className="subtle-tag">{state.campaigns.filter(c=>c.status==='active').length} активны</span>)}{campaignTable(true)}<div className="card-footer">{link('Перейти ко всем рассылкам','Рассылки')}</div></section><section className="card">{header(ChartNoAxesCombined,'Результат',<span className="muted tiny">Данные примера</span>)}<div className="funnel">{[[Send,'Отправлено',total,'100%'],[MessageCircle,'Положительных',positive,total?(positive/total*100).toFixed(1)+'%':'0%'],[Users,'Квалифицировано','—','нет данных'],[CalendarDays,'Встречи','—','нет данных'],[Handshake,'Сделки','—','нет данных']].map(([Icon,label,n,percent]:any,i)=><React.Fragment key={label}>{i>0&&<span className="funnel-arrow">→</span>}<div><span>{label}</span><div className={'funnel-icon color-'+i}><Icon size={21}/></div><b>{n.toLocaleString(locale==='ru'?'ru-RU':'en-US')}</b><small>{percent}</small></div></React.Fragment>)}</div><div className="card-footer">{link('Смотреть аналитику воронки','Аналитика')}</div></section></div><div className="column"><section className="card ranking">{header(Trophy,'Рейтинг возможностей',link('Все возможности','Возможности'))}{opportunityTable()}<div className="card-footer">{link('Исследовать гипотезы','Возможности')}</div></section><section className="card">{header(Mail,'Домены и почты',link('Управление','Домены и почты'))}{domainTable()}<div className="card-footer">{link('Подключить почтовый ящик','Домены и почты')}</div></section><section className="card">{header(MessageCircle,'Причины ответов',link('Все ответы','Ответы'))}<div className="reasons">{[['Интерес к идее',44,'#159753'],['Нужны подробности',31,'#2863e8'],['Есть возражения',17,'#e7a520'],['Не сейчас',8,'#a0a6b3']].map(([label,n,color],i)=><div key={label}><span className="muted">{i+1}</span><span>{label}</span><div className="bar"><i style={{width:n+'%',background:String(color)}}/></div><b>{n}%</b></div>)}</div><div className="card-note">Иллюстрация распределения категорий</div></section></div></div></>}
  {page==='Рассылки'&&<section className="card full-card">{header(Send,'Все кампании',<span className="subtle-tag">{campaigns.length}</span>)}{campaignTable()}</section>}
  {page==='Возможности'&&<><div className="info-banner"><Lightbulb size={20}/><div><b>Пять гипотез для первого теста</b><p>Это демонстрационные идеи. Оценки не подтверждены исследованием рынка или реальными рассылками.</p></div></div><div className="ideas-grid">{ideas.map((o,i)=><article className="card idea-card" key={o.id}><div className="idea-top"><span className="idea-number">0{i+1}</span><span className="score">{o.score}<small>/100</small></span></div><h2>{o.name}</h2><p className="market-label"><Flag market={o.market}/>{o.market} <span>от ${o.price.toLocaleString(locale==='ru'?'ru-RU':'en-US')}</span></p><label>ГИПОТЕЗА БОЛИ</label><p>{o.pain}</p><label>ПРЕДЛОЖЕНИЕ</label><p>{o.offer}</p><div className="idea-bottom"><button className="secondary" onClick={()=>{setSelected(o.id);setModal('idea');}}>Обоснование</button><button onClick={()=>create(o)}>Создать тест<ArrowRight size={15}/></button></div></article>)}</div></>}
@@ -136,14 +156,27 @@ function App(){
     <p className="tiny muted">Шифрование секретов: {platform?.encryption==='environment'?'ключ из переменных окружения':'ключ создан сервером — задайте ENCRYPTION_KEY для более надёжного варианта'}</p>
     <form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);
       run(async()=>{await api('/platform',{google:{clientId:String(f.get('gid')||''),clientSecret:String(f.get('gsecret')||'')},
-        microsoft:{clientId:String(f.get('mid')||''),clientSecret:String(f.get('msecret')||''),tenant:String(f.get('mtenant')||'')}});
+        microsoft:{clientId:String(f.get('mid')||''),clientSecret:String(f.get('msecret')||''),tenant:String(f.get('mtenant')||'')},
+        openaiKey:String(f.get('openaiKey')||''),openaiModel:String(f.get('openaiModel')||''),
+        searchProvider:String(f.get('searchProvider')||''),searchKey:String(f.get('searchKey')||''),
+        placesProvider:String(f.get('placesProvider')||''),placesKey:String(f.get('placesKey')||'')});
        setPlatform(await api('/platform'));},'Приложения платформы сохранены');}}>
      <div className="form-row"><label>Google client ID<input name="gid" placeholder={platform?.google?.configured?'Заполнено':''}/></label>
       <label>Google client secret<input name="gsecret" type="password" placeholder={platform?.google?.configured?'Заполнено':''}/></label></div>
      <div className="form-row"><label>Microsoft client ID<input name="mid" placeholder={platform?.microsoft?.configured?'Заполнено':''}/></label>
       <label>Microsoft client secret<input name="msecret" type="password" placeholder={platform?.microsoft?.configured?'Заполнено':''}/></label></div>
      <label>Тенант Microsoft<input name="mtenant" defaultValue={platform?.microsoft?.tenant??'common'}/></label>
-     <button disabled={busy}>Сохранить приложения</button></form></div></section>
+     <h3 className="platform-heading">Инфраструктура поиска и модели</h3>
+     <p className="tiny muted">Заполненное здесь работает для всех аккаунтов, и обычному пользователю не придётся вводить ни одного ключа.</p>
+     <div className="form-row"><label>Ключ модели<input name="openaiKey" type="password" placeholder={platform?.openai?.configured?'Заполнено':''}/></label>
+      <label>Модель<input name="openaiModel" defaultValue={platform?.openai?.model??''}/></label></div>
+     <div className="form-row"><label>Поиск в интернете<select name="searchProvider" defaultValue={platform?.search?.provider??''}>
+       <option value="">Не подключён</option><option value="brave">Brave</option><option value="tavily">Tavily</option><option value="serper">Serper</option></select></label>
+      <label>Ключ поиска<input name="searchKey" type="password" placeholder={platform?.search?.configured?'Заполнено':''}/></label></div>
+     <div className="form-row"><label>Поиск организаций<select name="placesProvider" defaultValue={platform?.places?.provider??''}>
+       <option value="">Не подключён</option><option value="google">Google Places</option></select></label>
+      <label>Ключ поиска организаций<input name="placesKey" type="password" placeholder={platform?.places?.configured?'Заполнено':''}/></label></div>
+     <button disabled={busy}>Сохранить настройки платформы</button></form></div></section>
   {!accounts.length?<div className="empty">Нажмите «Обновить», чтобы загрузить список аккаунтов.</div>
    :<section className="card full-card">{header(Users,'Аккаунты',<span className="subtle-tag">{accounts.length}</span>)}
     <div className="table-scroll"><table><thead><tr><th>Адрес</th><th>Роль</th><th>Состояние</th><th>Вход</th><th/></tr></thead>
@@ -163,7 +196,7 @@ function App(){
  {page==='Ответы'&&<><div className="tabs">{[['all','Все ответы'],['positive','Положительные'],['neutral','Уточнения'],['negative','Отказы']].map(([key,label])=><button className={replyFilter===key?'tab active-tab':'tab'} key={key} onClick={()=>setReplyFilter(key)}>{label}</button>)}</div><div className="reply-list">{state.replies.filter(r=>(replyFilter==='all'||r.category===replyFilter)&&match(r.name+r.text+r.email)).map(r=><article className="card reply" key={r.id}><div className="reply-avatar" aria-hidden="true">{translate(r.name,locale)[0]}</div><div className="reply-content"><div className="reply-heading"><h3>{r.name} <span>{r.company}</span></h3><span className={'badge '+(r.category==='positive'?'active':'draft')}>{categories[r.category]}</span></div><small>{r.email} · {state.campaigns.find(c=>c.id===r.campaignId)?.name}{(r as any).source==='inbox'&&<> · принято из почтового ящика</>}</small><p data-user-content={!r.id.match(/^r[12]$/)}>{r.text}</p><div className="reply-actions"><span><CalendarDays size={14}/> {r.category==='positive'?'Следующий шаг: согласовать встречу':'Следующий шаг: изучить запрос'}</span><button className="text-link" onClick={()=>run(()=>api('/suppress',{email:r.email}),'Адресат исключён из всех кампаний')}>Исключить адресата</button></div></div></article>)}{!state.replies.filter(r=>(replyFilter==='all'||r.category===replyFilter)&&match(r.name+r.text+r.email)).length&&<div className="empty card">Ответов в этой категории пока нет.</div>}</div></>}
  {page==='Аналитика'&&<><div className="stats analytics-stats">{[['Отправлено',total],['Положительные ответы',positive],['Конверсия',`${total?(positive/total*100).toFixed(1):0}%`],['Ценность / 1 000 отправок',total?`${Math.round(value/total*1000)} $`:'—']].map(([label,n])=><article className="card metric" key={label}><span>{label}</span><h2>{n}</h2><small>Демонстрационные данные</small></article>)}</div><section className="card full-card">{header(ChartNoAxesColumnIncreasing,'Результаты по кампаниям')}{campaignTable()}<div className="card-note">Основная метрика ТЗ считается по безопасно доставленным письмам. Подтверждённых доставок пока нет; выше показан пример расчёта по отправкам.</div></section><section className="card full-card">{header(ChartNoAxesCombined,'Положительные ответы')}<div className="chart">{state.campaigns.map(c=><div key={c.id}><span>{c.name}</span><div className="chart-track"><i style={{width:Math.max(1,c.positive/Math.max(1,...state.campaigns.map(c=>c.positive))*100)+'%'}}/></div><b>{c.positive}</b></div>)}</div></section></>}
  {page==='Настройки'&&<div className="settings-grid"><section className="card setting">{header(Globe,'Сервер приложения')}<p>{browserDemo()?'Данные сохраняются только в этом браузере. Для общей рабочей области подключите сервер.':'Подключение к серверной рабочей области.'}</p><form onSubmit={e=>{e.preventDefault();run(async()=>{const url=serverDraft.trim().replace(/\/$/,'');if(url&&new URL(url).protocol!=='https:')throw Error('Укажите HTTPS-адрес сервера.');localStorage.setItem('sendina-api-url',url);await reload();},'Адрес сервера сохранён');}}><input aria-label="HTTPS-адрес сервера" type="url" placeholder="https://api.example.com" value={serverDraft} onChange={e=>setServerDraft(e.target.value)}/><button disabled={busy}>Сохранить</button></form><label className="backend-token">Токен доступа<input type="password" aria-label="Токен доступа" defaultValue={sessionStorage.getItem('token')??''} onChange={e=>sessionStorage.setItem('token',e.target.value)}/></label></section><section className="card setting">{header(Globe,'Язык интерфейса')}<p>Текст и данные пользователя сохраняются на исходном языке.</p><select aria-label="Язык интерфейса" value={locale} onChange={e=>setLocale(e.target.value as Locale)}><option value="ru">Русский</option><option value="en">Английский</option></select></section><section className="card setting">{header(Search,'Подключения аккаунта')}
-  <p>Ключи модели, поиска и почтовых провайдеров хранятся в вашем аккаунте. Заполните их по шагам — сервер их не возвращает обратно.</p>
+  <p>{caps?.provided?.model==='platform'?'Модель и поиск уже предоставлены Sendina — заполнять ничего не нужно. Эти поля пригодятся, только если вы хотите работать на своих ключах.':'Ключи модели и поиска пока не настроены администратором. Их можно указать здесь, для своего аккаунта.'}</p>
   <div className="connection-status">
    {[['Модель',caps?.connections?.openai?.configured],['Поиск адресатов',caps?.connections?.search?.configured],
      ['Google Workspace',caps?.connections?.google?.configured],['Microsoft 365',caps?.connections?.microsoft?.configured]].map(([label,ok])=>
@@ -178,7 +211,7 @@ function App(){
  <section className="card setting">{header(MessageCircle,'Коннектор ChatGPT')}<p>Управляйте Sendina из чата: создавайте кампании, готовьте письма и смотрите результаты через MCP.</p><button className="secondary" onClick={()=>run(async()=>{setIntegration(await api('/integrations'));setModal('mcp');})}>Параметры подключения<ArrowRight size={15}/></button></section><section className="card setting">{header(Power,'Управление отправками')}<p>Аварийная остановка приостанавливает все активные кампании. После снятия остановки возобновляйте их по отдельности.</p><button className={state.stopped?'secondary':'danger'} disabled={busy} onClick={()=>run(()=>api('/stop',{stopped:!state.stopped}),state.stopped?'Остановка снята. Кампании остаются на паузе.':'Все кампании приостановлены')}><Power size={16}/>{state.stopped?'Снять аварийную остановку':'Остановить все кампании'}</button></section><section className="card setting">{header(Shield,'Глобальные исключения')}<p>Отказавшиеся адресаты исключаются из всех кампаний рабочей области.</p><form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);run(()=>api('/suppress',{email:f.get('email')}),'Адресат исключён');e.currentTarget.reset();}}><input type="email" name="email" placeholder="email@company.com" aria-label="Исключить email" required/><button disabled={busy}>Добавить</button></form><div className="suppressed">{state.suppressed.map(e=><span key={e}>{e}</span>)}</div></section><section className="card setting">{header(Info,'Режим работы')}<p>Поиск адресатов и подготовка писем работают через подключённую модель. SMTP и автоматический приём писем ещё не подключены, отправка отключена.</p><span className="badge draft">Демонстрационный режим</span></section><section className="card setting">{header(CalendarDays,'Журнал действий')}<p>Создание кампаний, проверки и изменения состояния сохраняются с датой и идентификатором.</p><button className="secondary" onClick={()=>setModal('audit')}>Открыть журнал<ArrowRight size={15}/></button></section></div>}
  <footer className="page-footer"><span><span className="dot"/> Sendina · ваш путь от идеи к результату</span><span>Демо-данные · v0.1</span></footer></main></div>
  {notice&&<div className="toast" role="status"><Check size={18}/>{notice}<button className="icon-button" aria-label="Закрыть уведомление" onClick={()=>setNotice('')}><X size={15}/></button></div>}
- {modal&&<div className="modal-backdrop" onClick={e=>{if(e.target===e.currentTarget)setModal('');}}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><button className="close icon-button" aria-label="Закрыть" onClick={()=>setModal('')}><X/></button><h2 id="modal-title">{({connections:'Подключения аккаунта',connect:'Подключение ящика',recipients:'Адресаты кампании',confirm:'Подтверждение адресата',mcp:'Коннектор ChatGPT',create:'Новая рассылка',domain:'Подключить почтовый ящик',dns:'Проверка DNS',audit:'Журнал действий',idea:'Обоснование гипотезы',campaign:'Управление кампанией',contacts:'Импорт адресатов',preview:'Предпросмотр писем'} as Record<string,string>)[modal]}</h2>{error&&<div className="alert error" role="alert">{error}</div>}
+ {modal&&<div className="modal-backdrop" onClick={e=>{if(e.target===e.currentTarget)setModal('');}}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><button className="close icon-button" aria-label="Закрыть" onClick={()=>setModal('')}><X/></button><h2 id="modal-title">{({guided:'Запуск кампании',connections:'Подключения аккаунта',connect:'Подключение ящика',recipients:'Адресаты кампании',confirm:'Подтверждение адресата',mcp:'Коннектор ChatGPT',create:'Новая рассылка',domain:'Подключить почтовый ящик',dns:'Проверка DNS',audit:'Журнал действий',idea:'Обоснование гипотезы',campaign:'Управление кампанией',contacts:'Импорт адресатов',preview:'Предпросмотр писем'} as Record<string,string>)[modal]}</h2>{error&&<div className="alert error" role="alert">{error}</div>}
  {modal==='mcp'&&integration&&<><p>Добавьте коннектор с этим адресом в ChatGPT. На экране согласия введите код коннектора — он привязывает чат ровно к вашему аккаунту.</p><div className="integration-details"><label>URL<input readOnly value={integration.mcp.endpoint}/></label>
   <label>Код коннектора<input readOnly type={connector?'text':'password'} value={connector||'••••••••'} onFocus={e=>e.currentTarget.select()}/></label>
   <div className="button-stack"><button className="secondary small-button" disabled={busy} onClick={()=>run(async()=>setConnector((await api('/settings/connector')).code))}>Показать код</button>
@@ -187,10 +220,10 @@ function App(){
  {modal==='domain'&&<form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);run(async()=>{await api('/domains',{email:f.get('email')});setModal('');},'Ящик добавлен. Необходима проверка домена.');}}><p className="muted">Ящики одного домена используют общий лимит. Пароль от почты здесь не требуется.</p><label>Адрес почтового ящика<input autoFocus name="email" type="email" placeholder="you@company.com" required/></label><button className="wide" disabled={busy}>Добавить ящик</button></form>}
  {modal==='connections'&&(()=>{
   const steps=[
-   {key:'openai',title:'Модель',lead:'Ключ OpenAI используется для подбора адресатов и подготовки писем. Без него эти действия откажутся работать, а не начнут выдумывать.',
+   {key:'openai',title:'Модель',lead:'Обычно ключ предоставляет Sendina, и заполнять это поле не нужно. Укажите свой, только если хотите работать на собственном ключе.',
     done:caps?.connections?.openai?.configured,
     fields:[['openaiKey','Ключ OpenAI','password','sk-…'],['openaiModel','Модель','text','gpt-4.1-mini'],['aiGatewayUrl','Адрес шлюза (необязательно)','text','https://api.openai.com/v1']]},
-   {key:'search',title:'Поиск адресатов',lead:'С поисковым ключом кандидаты ссылаются на настоящий результат. Без него они остаются неподтверждёнными и не проходят правила.',
+   {key:'search',title:'Поиск адресатов',lead:'Тоже обычно предоставлено платформой. Свой ключ поиска нужен, только если вы хотите отделить свои запросы от общих.',
     done:caps?.connections?.search?.configured,
     fields:[['searchProvider','Провайдер','select',''],['searchKey','Ключ поискового API','password','']]},
    {key:'google',title:'Google Workspace',lead:'Обычно это заполняет администратор Sendina один раз на всю платформу, и вам ничего вводить не нужно. Эти поля — запасной вариант: своё приложение Google Cloud Console со scope gmail.send и gmail.readonly.',
@@ -226,6 +259,83 @@ function App(){
      {step<steps.length-1&&<button type="button" className="text-link" onClick={()=>setStep(step+1)}>Пропустить шаг</button>}</div>
    </form></>;
  })()}
+ {modal==='guided'&&guided&&(()=>{
+  const sender=state.domains.some(d=>domainReadiness(d,state.stopped).ready);
+  if(guided.step==='brief')return <form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);
+    const product=String(f.get('product')),problem=String(f.get('problem'));
+    run(async()=>{
+     let market=String(f.get('market'));
+     let why='';
+     if(market==='recommend'){const r=await api('/recommend-market',{context:product+'. '+problem,goal:String(f.get('goal'))});market=r.market;why=r.why;}
+     const campaign=await api('/campaigns',{name:product.slice(0,140),market,goal:String(f.get('goal')),
+      context:product+'. Решаемая проблема: '+problem,event:String(f.get('event')),control:'confirm'});
+     setGuided({...guided,step:guided.mode==='auto'?'research':'contacts',campaignId:campaign.id,market,why});});}}>
+   <p className="muted">{guided.mode==='auto'
+     ?'Четыре вопроса — и Sendina сама найдёт компании, адресатов и подготовит письма.'
+     :'Опишите предложение, чтобы письма были персональными. Адресатов вы добавите на следующем шаге.'}</p>
+   <label>Что продаём<input name="product" required autoFocus placeholder="Автоматизация брони для небольших отелей"/></label>
+   <label>Какую проблему это решает<textarea name="problem" rows={2} required placeholder="Заявки теряются, ответы гостям пишут вручную"/></label>
+   <div className="form-row">
+    <label>Чего хотим добиться<select name="goal" defaultValue="Продажа услуги">
+     <option>Продажа услуги</option><option>Партнёрство</option><option>Поиск инвесторов</option><option>Найм</option><option>Обращение</option></select></label>
+    <label>Целевое событие<select name="event" defaultValue="Встреча">
+     <option>Встреча</option><option>Положительный ответ</option><option>Демонстрация</option><option>Получение документа</option></select></label></div>
+   <label>Где ищем<select name="market" defaultValue="recommend">
+    <option value="recommend">Пусть Sendina порекомендует</option>
+    {markets.map(m=><option key={m} value={m}>{m}</option>)}</select></label>
+   <button disabled={busy}>Продолжить<ArrowRight size={15}/></button></form>;
+
+  if(guided.step==='research')return <>
+   {guided.why&&<div className="info-banner compact"><Info size={20}/><div><b>Рынок: {guided.market}</b><p data-user-content>{guided.why}</p></div></div>}
+   <p className="muted">Sendina найдёт реальные организации, проверит источники и оставит адресатом только того, чей адрес подтверждается источником.</p>
+   <div className="button-stack">
+    <button disabled={busy} onClick={()=>run(async()=>{
+      const found=await api('/campaigns/'+guided.campaignId+'/find',{count:20});
+      const preview=await api('/campaigns/'+guided.campaignId+'/launch-preview',{limit:5});
+      setGuided({...guided,step:'preview',found,preview});})}>Найти адресатов<Search size={15}/></button>
+    <button className="secondary" onClick={()=>setGuided({...guided,step:'contacts'})}>Добавить своих</button></div></>;
+
+  if(guided.step==='contacts')return <form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);
+    run(async()=>{const contacts=JSON.parse(String(f.get('contacts')));
+     await api('/campaigns/'+guided.campaignId+'/contacts',{contacts});
+     const preview=await api('/campaigns/'+guided.campaignId+'/launch-preview',{limit:5});
+     setGuided({...guided,step:'preview',preview});});}}>
+   <p className="muted">Вставьте адресатов списком JSON. Для каждого нужны источник, основание и конкретная причина обращения — без причины письмо будет помечено как спам.</p>
+   <label>Адресаты<textarea name="contacts" rows={10} required placeholder='[{"email":"name@company.com","name":"Имя","company":"Компания","source":"https://company.com/contact","basis":"Опубликованный рабочий контакт","reason":"Конкретная причина обращения"}]'/></label>
+   <button disabled={busy}>Проверить и показать письма<ArrowRight size={15}/></button></form>;
+
+  const preview=guided.preview;
+  return <>
+   {guided.found&&<div className="info-banner compact"><Info size={20}/><div>
+     <b>{guided.found.mode==='organisations'?'Поиск по реальным организациям':guided.found.mode==='search'?'Поиск в интернете':'Предложения модели'}</b>
+     <p>Добавлено: {guided.found.added} · Подтверждено источником: {guided.found.verified}</p>
+     {guided.found.notes?.map((n:string,i:number)=><p key={i} className="tiny" data-user-content>{n}</p>)}</div></div>}
+   <p className="muted">Адресатов: {preview?.recipients??0}, из них подтверждено источником: {preview?.verified??0}. Ниже — первые письма целиком.</p>
+   {!preview?.sample?.length?<div className="empty">Подходящих адресатов пока нет.</div>
+    :preview.sample.map((m:any)=><article className={m.bulk?'preview-message flagged':'preview-message'} key={m.contactId}>
+     <div className="preview-head"><h3 data-user-content>{m.name}{m.role&&<> · {m.role}</>}</h3>
+      <span className={'badge '+(m.policy.decision==='allow'?'active':'draft')}>{reasons[m.policy.reason]??m.policy.reason}</span></div>
+     <p className="tiny" data-user-content>{[m.company,m.country].filter(Boolean).join(' · ')} · {m.email||'адрес не подтверждён'}</p>
+     <p className="tiny"><b>Почему выбран:</b> <span data-user-content>{m.reason}</span></p>
+     {m.evidence&&<p className="tiny"><b>Доказательство:</b> <span data-user-content>{m.evidence}</span></p>}
+     {m.source&&<a href={m.source} target="_blank" rel="noreferrer">Источник <ExternalLink size={12}/></a>}
+     <p className="letter" data-user-content>{m.text}</p></article>)}
+   <label>Как запускаем<select value={preview?.campaign?.control??'confirm'} disabled={busy}
+     onChange={e=>run(async()=>{await api('/campaigns/'+guided.campaignId+'/control',{control:e.target.value});
+      setGuided({...guided,preview:await api('/campaigns/'+guided.campaignId+'/launch-preview',{limit:5})});})}>
+    <option value="confirm">Подтвердить первую партию</option>
+    <option value="auto">Полностью автоматически</option>
+    <option value="manual">Полностью вручную</option></select></label>
+   {!sender&&<div className="alert error" role="alert">Отправитель не подключён. Правила не пропустят отправку, пока ящик не подключён и не проверен.
+    <button className="text-link" onClick={()=>{setDetection(null);setModal('connect');}}>Подключить отправителя<ArrowRight size={12}/></button></div>}
+   <div className="button-stack">
+    <button disabled={busy} onClick={()=>run(async()=>{
+      if((preview?.campaign?.control??'confirm')==='confirm')await api('/campaigns/'+guided.campaignId+'/approve',{});
+      await api('/campaigns/'+guided.campaignId+'/status',{status:'active'});
+      setModal('');setGuided(null);go('Рассылки');},'Кампания запущена. Отправка пойдёт в рамках правил.')}>
+     Подтвердить и запустить</button>
+    <button className="secondary" onClick={()=>{setModal('');setGuided(null);go('Рассылки');}}>Оставить черновиком</button></div></>;
+ })()}
  {modal==='connect'&&(!detection
   ?<form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);
     run(async()=>setDetection(await api('/mailboxes/detect',{email:f.get('email')})));}}>
@@ -260,9 +370,9 @@ function App(){
         setModal('');setDetection(null);setAdvanced(false);
         setNotice(r.ready?'Ящик подключён и проверен':'Ящик подключён. Проверка: '+Object.entries(r.checks??{}).map(([k,v]:any)=>k+' '+v.status).join(', '));});}}>
       {found&&!advanced
-       ?<div className="info-banner compact"><Check size={18}/><div><b data-user-content>{found.label}</b>
-          <p className="tiny" data-user-content>SMTP {smtp.host}:{smtp.port} · IMAP {imap.host}:{imap.port}</p>
-          <button type="button" className="text-link" onClick={()=>setAdvanced(true)}>Изменить вручную</button></div></div>
+       ?<div className="info-banner compact"><Check size={18}/><div><b>Настройки определены автоматически</b>
+          <p className="tiny" data-user-content>{found.label}</p>
+          <button type="button" className="text-link" onClick={()=>setAdvanced(true)}>Показать и изменить вручную</button></div></div>
        :<><p className="muted">Автоматически определить настройки не удалось. Их можно взять в панели вашего почтового провайдера.</p>
          <div className="form-row"><label>SMTP host<input name="smtpHost" required defaultValue={smtp.host}/></label>
           <label>SMTP порт<input name="smtpPort" type="number" required defaultValue={smtp.port}/></label></div>

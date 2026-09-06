@@ -16,7 +16,7 @@ export function mountMcp(app:Express){
  const jwks=process.env.OAUTH_JWKS_URL?createRemoteJWKSet(new URL(process.env.OAUTH_JWKS_URL)):null;
  const authorizationServers=()=>oauthEnabled()?[publicUrl()]:issuer?[issuer]:[];
  const method=()=>oauthEnabled()?'OAuth 2.1':issuer&&jwks?'OAuth 2.1 (внешний провайдер)':process.env.MCP_TOKEN?'Токен разработчика':'Не настроено';
- const tools=['get_capabilities','get_dashboard','list_campaigns','get_campaign','create_campaign','find_recipients','import_contacts','confirm_recipient','prepare_messages','set_campaign_status','record_reply','exclude_recipient','emergency_stop','list_opportunities','list_mailboxes','verify_mailbox','sync_replies','test_mailbox'];
+ const tools=['get_capabilities','get_dashboard','list_campaigns','get_campaign','create_campaign','find_recipients','import_contacts','confirm_recipient','prepare_messages','launch_preview','set_control_mode','approve_first_batch','set_campaign_status','record_reply','exclude_recipient','emergency_stop','list_opportunities','list_mailboxes','verify_mailbox','sync_replies','test_mailbox'];
 
  app.get(['/.well-known/oauth-protected-resource','/.well-known/oauth-protected-resource/mcp'],(_req,res)=>
   res.json({resource:resourceUrl(),authorization_servers:authorizationServers(),scopes_supported:['sendina:read','sendina:write'],bearer_methods_supported:['header'],resource_name:'Sendina'}));
@@ -86,6 +86,12 @@ export function mountMcp(app:Express){
    {contactId:z.string(),email:z.email(),source:z.url(),evidence:z.string().min(10)},true,true,a=>operations.confirmRecipient(account,a));
   register('prepare_messages','Prepare drafts with the contact reason and a policy decision for each recipient. Does not send.',
    {id:z.string(),limit:z.number().int().min(1).max(50).optional()},true,true,a=>operations.prepareMessages(account,a));
+  register('launch_preview','The sample an operator reviews before launch: real recipients with organisation, role, source, evidence, reason and the letter each would receive.',
+   {id:z.string(),limit:z.number().int().min(1).max(50).optional()},true,true,a=>operations.launchPreview(account,a));
+  register('set_control_mode','How much of the first sending must be approved by hand: auto, confirm the first batch, or fully manual.',
+   {id:z.string(),control:z.enum(['auto','confirm','manual'])},true,true,a=>operations.setControlMode(account,a));
+  register('approve_first_batch','Approve the reviewed first batch, which is what lifts FIRST_BATCH_APPROVAL_REQUIRED.',
+   {id:z.string()},true,true,a=>operations.approveFirstBatch(account,a));
   register('set_campaign_status','Activate or pause a campaign. Activating re-checks for repeated addresses.',
    {id:z.string(),status:z.enum(['active','paused','draft'])},true,true,a=>operations.setCampaignStatus(account,a));
   register('record_reply','Record an inbound reply. Repeating the same eventId never duplicates it.',

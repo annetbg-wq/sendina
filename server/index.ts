@@ -48,10 +48,14 @@ const route=(fn:(ctx:Ctx,input:any)=>Promise<unknown>,status=200)=>async(req:exp
 app.get('/api/state',route(ctx=>operations.state(ctx)));
 app.get('/api/capabilities',route(ctx=>operations.capabilities(ctx)));
 app.post('/api/campaigns',route((c,i)=>operations.createCampaign(c,i),201));
+app.post('/api/recommend-market',route((c,i)=>operations.recommendMarket(c,i)));
 app.post('/api/campaigns/:id/status',route((c,i)=>operations.setCampaignStatus(c,i)));
 app.post('/api/campaigns/:id/contacts',route((c,i)=>operations.importContacts(c,i)));
 app.post('/api/campaigns/:id/find',route((c,i)=>operations.findRecipients(c,i)));
 app.post('/api/campaigns/:id/preview',route((c,i)=>operations.prepareMessages(c,i)));
+app.post('/api/campaigns/:id/launch-preview',route((c,i)=>operations.launchPreview(c,i)));
+app.post('/api/campaigns/:id/control',route((c,i)=>operations.setControlMode(c,i)));
+app.post('/api/campaigns/:id/approve',route((c,i)=>operations.approveFirstBatch(c,i)));
 app.post('/api/contacts/confirm',route((c,i)=>operations.confirmRecipient(c,i)));
 app.post('/api/stop',route((c,i)=>operations.emergencyStop(c,i)));
 app.post('/api/domains',route((c,i)=>operations.addMailbox(c,i)));

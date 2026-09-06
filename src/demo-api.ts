@@ -10,8 +10,8 @@ export async function demoApi(path:string,body?:any){
  if(path==='/auth/request')return {status:'demo',message:'Это демонстрация в браузере: вход не требуется. Подключите сервер, чтобы работать под своим аккаунтом.'};
  if(path==='/settings/connections')return {openai:{configured:false,model:'',gateway:''},search:{provider:'',configured:false},google:{configured:false},microsoft:{configured:false,tenant:'common'}};
  if(path==='/accounts')return [];
- if(path==='/platform')return {google:{configured:false},microsoft:{configured:false,tenant:'common'},encryption:'generated'};
- if(path==='/capabilities')return {ai:{ready:false,model:''},search:{ready:false,provider:''},recipients:{setting:s.settings?.recipientMode??'auto',effective:'proposal'},account:null,connections:{openai:{configured:false,model:'',gateway:''},search:{provider:'',configured:false},google:{configured:false},microsoft:{configured:false,tenant:'common'}},storage:{postgres:false,durable:false},sendingEnabled:false};
+ if(path==='/platform')return {google:{configured:false},microsoft:{configured:false,tenant:'common'},openai:{configured:false,model:''},search:{configured:false,provider:''},places:{configured:false,provider:''},encryption:'generated'};
+ if(path==='/capabilities')return {ai:{ready:false,model:''},search:{ready:false,provider:''},recipients:{setting:s.settings?.recipientMode??'auto',effective:'proposal'},organisations:{ready:false,provider:''},provided:{model:'none',search:'none',organisations:'none'},account:null,connections:{openai:{configured:false,model:'',gateway:''},search:{provider:'',configured:false},google:{configured:false},microsoft:{configured:false,tenant:'common'}},storage:{postgres:false,durable:false},sendingEnabled:false};
 if(path==='/integrations')return {mcp:{endpoint:'Not configured',authentication:'Not configured',ready:false,transport:'Streamable HTTP',tools:['get_dashboard','list_campaigns','list_opportunities','get_campaign','create_campaign','import_contacts','preview_campaign','set_campaign_status','emergency_stop','exclude_recipient']}};
  if(path==='/campaigns'){
   const c=z.object({name:z.string().min(3).max(150),market:z.string().min(1),goal:z.string().min(1),context:z.string().min(10).max(5000),event:z.string().min(1)}).parse(body);
@@ -27,6 +27,7 @@ if(path==='/integrations')return {mcp:{endpoint:'Not configured',authentication:
  }else if(path.match(/^\/domains\/[^/]+\/check$/))throw Error('Для проверки DNS подключите сервер в настройках.');
  else if(path.match(/^\/campaigns\/[^/]+\/find$/))throw Error('Для поиска адресатов подключите сервер в настройках.');
  else if(path==='/contacts/confirm')throw Error('Для подтверждения адресата подключите сервер в настройках.');
+ else if(path==='/recommend-market'||path.endsWith('/launch-preview')||path.endsWith('/control')||path.endsWith('/approve'))throw Error('Для этого действия подключите сервер в настройках.');
  else if(path.startsWith('/settings/connections')||path.startsWith('/accounts')||path.startsWith('/platform'))throw Error('Для этого действия подключите сервер в настройках.');
  else if(path==='/mailboxes/detect'){
   // The browser cannot read MX records, so the demo shows the manual route honestly.
@@ -46,7 +47,7 @@ if(path==='/integrations')return {mcp:{endpoint:'Not configured',authentication:
    const contacts=z.array(z.object({email:z.email(),name:z.string().min(1),company:z.string().min(1),source:z.url(),basis:z.string().min(3),reason:z.string().min(10)})).min(1).max(1000).parse(body.contacts);let added=0;
    for(const p of contacts){const email=p.email.toLowerCase();if(!s.contacts.some(x=>x.campaignId===c.id&&x.email===email)){s.contacts.push({...p,email,id:crypto.randomUUID(),campaignId:c.id});added++;}}result={added};log(`Импортировано адресатов: ${added}`);
   }else{
-   result=s.contacts.filter(p=>p.campaignId===c.id).map(p=>{let m=s.messages.find(m=>m.contactId===p.id);if(!m){m={id:crypto.randomUUID(),campaignId:c.id,contactId:p.id,email:p.email,subject:c.name,text:`Здравствуйте, ${p.name}!\n\n${p.reason}\n\n${c.context}\n\nГотовы обсудить следующий шаг: ${c.event.toLowerCase()}?\n\nЕсли предложение неактуально, сообщите об этом — мы прекратим обращения.`,status:'draft'};s.messages.push(m);}return {...m,source:p.source,reason:p.reason,policy:policy({stopped:s.stopped,status:c.status,suppressed:s.suppressed.includes(p.email),replied:s.replies.some(r=>r.email===p.email&&r.campaignId===c.id),basis:p.basis??'',contactReason:p.reason??'',sourceVerified:p.verification!=='unverified',duplicate:false,verified:false,used:0,limit:0})};});
+   result=s.contacts.filter(p=>p.campaignId===c.id).map(p=>{let m=s.messages.find(m=>m.contactId===p.id);if(!m){m={id:crypto.randomUUID(),campaignId:c.id,contactId:p.id,email:p.email,subject:c.name,text:`Здравствуйте, ${p.name}!\n\n${p.reason}\n\n${c.context}\n\nГотовы обсудить следующий шаг: ${c.event.toLowerCase()}?\n\nЕсли предложение неактуально, сообщите об этом — мы прекратим обращения.`,status:'draft'};s.messages.push(m);}return {...m,source:p.source,reason:p.reason,policy:policy({stopped:s.stopped,status:c.status,suppressed:s.suppressed.includes(p.email),replied:s.replies.some(r=>r.email===p.email&&r.campaignId===c.id),basis:p.basis??'',contactReason:p.reason??'',sourceVerified:p.verification!=='unverified',duplicate:false,control:(c.control??'confirm'),firstBatchApproved:Boolean(c.firstBatchApprovedAt),verified:false,used:0,limit:0})};});
   }
  }
  localStorage.setItem(key,JSON.stringify(s));return result;
