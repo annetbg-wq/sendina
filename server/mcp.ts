@@ -10,6 +10,8 @@ import {RESULTS} from './research';
 import {mailboxOperations} from './mailboxes';
 import {oauthEnabled,publicUrl,resourceUrl,verifyLocalToken} from './oauth';
 import {findAccount,ensureAccount} from './accounts';
+import {sourceReady,listSource,readSource,writeSource,openPullRequest,checksFor,
+ pullRequestStatus,mergePullRequest} from './source';
 import type {Ctx} from './context';
 
 /** MCP tools call the same operations layer as the UI, in process. Nothing goes back over HTTP. */
@@ -18,7 +20,7 @@ export function mountMcp(app:Express){
  const jwks=process.env.OAUTH_JWKS_URL?createRemoteJWKSet(new URL(process.env.OAUTH_JWKS_URL)):null;
  const authorizationServers=()=>oauthEnabled()?[publicUrl()]:issuer?[issuer]:[];
  const method=()=>oauthEnabled()?'OAuth 2.1':issuer&&jwks?'OAuth 2.1 (внешний провайдер)':process.env.MCP_TOKEN?'Токен разработчика':'Не настроено';
- const tools=['get_capabilities','get_dashboard','list_campaigns','get_campaign','create_campaign','find_recipients','import_contacts','confirm_recipient','prepare_messages','launch_preview','set_control_mode','approve_first_batch','set_campaign_status','record_reply','exclude_recipient','emergency_stop','list_mailboxes','verify_mailbox','sync_replies','test_mailbox','research_opportunities','list_opportunities','research_markets_by_country','research_markets_by_niche','assess_market','list_markets','save_favourite','remove_favourite','create_test_from_research','list_threads','get_thread','set_thread_action','get_analytics','list_locations','propose_recipients','save_opportunities','save_market_results','get_sender_status','send_campaign','set_domain_limit'];
+ const tools=['get_capabilities','get_dashboard','list_campaigns','get_campaign','create_campaign','find_recipients','import_contacts','confirm_recipient','prepare_messages','launch_preview','set_control_mode','approve_first_batch','set_campaign_status','record_reply','exclude_recipient','emergency_stop','list_mailboxes','verify_mailbox','sync_replies','test_mailbox','research_opportunities','list_opportunities','research_markets_by_country','research_markets_by_niche','assess_market','list_markets','save_favourite','remove_favourite','create_test_from_research','list_threads','get_thread','set_thread_action','get_analytics','list_locations','propose_recipients','save_opportunities','save_market_results','get_sender_status','send_campaign','set_domain_limit','list_source','read_source','write_source','open_pull_request','get_checks','get_pull_request','merge_pull_request'];
 
  app.get(['/.well-known/oauth-protected-resource','/.well-known/oauth-protected-resource/mcp'],(_req,res)=>
   res.json({resource:resourceUrl(),authorization_servers:authorizationServers(),scopes_supported:['sendina:read','sendina:write'],bearer_methods_supported:['header'],resource_name:'Sendina'}));
@@ -194,6 +196,36 @@ export function mountMcp(app:Express){
    true,false,a=>operations.send(account,a));
   register('set_domain_limit','Set how many messages a day a domain may send. It starts at zero, which blocks sending, and only an operator raises it.',
    {id:z.string(),limit:z.number().int().min(0).max(2000)},true,true,a=>operations.setDomainLimit(account,a));
+
+  // Changing Sendina itself. These write to the repository, never to this server's filesystem —
+  // see server/source.ts for why that distinction is the entire design. Superadmin only, because
+  // editing the product is not something one workspace does on behalf of everybody else's.
+  const source=(name:string,description:string,schema:any,write:boolean,idempotent:boolean,
+   fn:(a:any)=>Promise<any>)=>
+   register(name,description,schema,write,idempotent,async(a:any)=>{
+    if(account.role!=='superadmin')throw Error('Правка исходного кода доступна только суперадмину.');
+    if(!sourceReady())throw Error('Правка исходного кода не настроена: администратор задаёт GITHUB_TOKEN и SOURCE_REPO.');
+    return fn(a);
+   });
+
+  source('list_source','List files and folders of the Sendina repository.',
+   {path:z.string().max(300).optional()},false,true,a=>listSource(a.path??''));
+  source('read_source','Read one source file of Sendina, from the base branch or from a branch you are working on.',
+   {path:z.string().max(300),ref:z.string().max(100).optional()},false,true,a=>readSource(a.path,a.ref));
+  source('write_source','Write one or more source files as a single commit on a working branch. Never writes to the base branch: a change reaches it only through a pull request whose tests passed. The CI workflow files cannot be edited.',
+   {branch:z.string().max(100),message:z.string().min(3).max(500),
+    files:z.array(z.object({path:z.string().max(300),content:z.string().max(400000)})).min(1).max(30),
+    from:z.string().max(100).optional()},
+   true,false,a=>writeSource(a));
+  source('open_pull_request','Open a pull request from a working branch. Opening it is what starts the test suite.',
+   {branch:z.string().max(100),title:z.string().min(3).max(200),body:z.string().max(5000).optional()},
+   true,true,a=>openPullRequest(a));
+  source('get_checks','What CI said about one commit: which runs exist, whether they finished and whether they passed.',
+   {ref:z.string().max(100)},false,true,a=>checksFor(a.ref));
+  source('get_pull_request','A pull request with the state of its checks.',
+   {number:z.number().int().min(1)},false,true,a=>pullRequestStatus(a.number));
+  source('merge_pull_request','Merge a pull request, which is what deploys. Refused while the checks are unfinished or failing — a red suite is the answer, not an obstacle.',
+   {number:z.number().int().min(1)},true,false,a=>mergePullRequest(a.number));
 
   const transport=new StreamableHTTPServerTransport({sessionIdGenerator:undefined,enableJsonResponse:true});
   res.on('close',()=>{void transport.close();void server.close();});
