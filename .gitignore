@@ -4,3 +4,6 @@ dist/
 data/
 test-results/
 playwright-report/
+
+# Playwright MCP session artefacts, not part of the product.
+.playwright-mcp/

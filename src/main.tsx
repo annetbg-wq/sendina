@@ -583,41 +583,35 @@ function App(){
    <button disabled={busy}>Определить провайдера</button></form>
   :<><div className="info-banner compact"><Info size={20}/><div>
     <b>{providers[detection.provider]??providers.unknown}</b>
-    <p data-user-content>{detection.note}</p>
+    <p data-user-content>{detection.route==='oauth-unconfigured'
+     ?'Подключение по адресу и паролю приложения. Настройки сервера подставлены автоматически.'
+     :detection.note}</p>
     {detection.mx?.length>0&&superadmin&&<p className="tiny" data-user-content>MX: {detection.mx.slice(0,3).join(', ')}</p>}</div></div>
    {detection.personal&&<div className="alert error" role="alert">Личный ящик. Рабочий сценарий — корпоративный домен организации; личный подходит только как тестовый случай.</div>}
 
-   {/* Consent first, always. For Google and Microsoft this is the way in; the password route
-        below it is the advanced one, and is only opened by hand or when there is no application. */}
-   {detection.route==='oauth'&&<div className="button-stack">
+   {/* Consent is offered only where it can actually be completed — that is what route 'oauth'
+       means. Where the platform has no application registered, this whole way in does not exist
+       for the person in front of the screen, so it is not mentioned: not as a button, not as a
+       problem to report, and not as something for them to configure. They are shown the route
+       that works instead. Registering the application is the platform's own task, and it is done
+       on the Accounts screen, where it belongs.
+
+       Once the advanced route has been opened by hand, the offer steps out of the way rather
+       than sitting above the form being filled in. */}
+   {detection.route==='oauth'&&!expert&&<div className="button-stack">
     <button disabled={busy} onClick={()=>run(async()=>{const r=await api('/mailboxes/oauth',{email:detection.email});
      window.open(r.url,'_blank','noopener');setModal('');setDetection(null);},'Завершите согласие в открывшейся вкладке, затем проверьте ящик')}>
      Подключить через {detection.provider==='google'?'Google':'Microsoft'}</button>
     <span className="tiny muted">{detection.appOwner==='platform'?'Приложение Sendina — client id вводить не нужно.':'Используется приложение вашего аккаунта.'}</span></div>}
 
-   {/* A missing platform application is the platform's problem. An ordinary person is told that
-       plainly and offered the way that does work; a superadmin is told exactly where to fix it. */}
-   {detection.route==='oauth-unconfigured'&&detection.blocker&&<div className="alert error" role="alert">
-    {superadmin
-     ?<><b>{detection.blocker.forSuperadmin}</b>
-       <p>Подключение через {detection.provider==='google'?'Google':'Microsoft'} будет доступно всем аккаунтам сразу после того,
-        как вы заполните {detection.blocker.where.field} в разделе «{detection.blocker.where.section}» на экране «Аккаунты».</p>
-       <p className="tiny">Адрес возврата для приложения: <code>{detection.blocker.where.redirectUri}</code></p>
-       <button className="secondary small-button" onClick={()=>{setModal('');setDetection(null);go('Аккаунты');}}>
-        Настроить приложение платформы<ArrowRight size={14}/></button></>
-     :<><b>Подключение через {detection.provider==='google'?'Google':'Microsoft'} пока недоступно.</b>
-       <p>Приложение платформы ещё не настроено администратором Sendina. Пока этого не произошло, ящик можно
-        подключить расширенным способом — по паролю приложения.</p></>}</div>}
-
-   {/* The advanced route is offered for every provider, including the ones where consent is the
-       first offer: somebody whose organisation will not grant consent still has to be able to
-       connect their mailbox. It is folded away there, never removed. */}
+   {/* Connecting by password. It is the advanced route only where consent is available; where
+       it is not, it is simply the way this mailbox connects, and it opens ready to fill in
+       rather than hidden behind a link somebody has to think to press. */}
    {(()=>{
      const found=detection.settings;
      const smtp=found?.smtp??{host:'',port:465,secure:true};
      const imap=found?.imap??{host:'',port:993,secure:true};
-     // Where consent is the intended route, the password form stays folded away until asked for.
-     if(detection.provider!=='smtp'&&!expert)return <button className="text-link" onClick={()=>setExpert(true)}>
+     if(detection.route==='oauth'&&!expert)return <button className="text-link" onClick={()=>setExpert(true)}>
        Расширенный способ подключения (SMTP и IMAP по паролю приложения)<ChevronRight size={13}/></button>;
      return <form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);
        const asServer=(prefix:string)=>({host:String(f.get(prefix+'Host')),port:Number(f.get(prefix+'Port')),secure:f.get(prefix+'Secure')==='on'});

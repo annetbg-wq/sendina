@@ -119,25 +119,33 @@ test('a Gmail address is offered Google first, and the advanced route is not an 
  await noOriginError(page);
 });
 
-test('an unregistered platform application is the platform’s blocker, not the user’s task',async({page})=>{
+test('an unregistered platform application is never the user’s problem to look at',async({page})=>{
  await signIn(page,superadmin);
  await openMailSettings(page);
  await page.getByRole('button',{name:'Подключить ящик'}).click();
 
- // The harness registers Google but not Microsoft, which is exactly the state the tester hit:
- // the person is told plainly that it is the platform's setup that is missing, and — because
- // they are a superadmin here — exactly where to fix it.
+ // The harness registers Google but not Microsoft, which is the state the tester hit. Consent
+ // through Microsoft cannot be completed here, so it is not a route this screen has: offering a
+ // button that leads nowhere, or reporting the platform's own missing setup, is not a choice
+ // between two ways in — it is one broken way and one hidden one.
  const dialog=page.getByRole('dialog');
  await dialog.getByLabel('Рабочий e-mail').fill('sales@outlook.com');
  await dialog.getByRole('button',{name:'Определить провайдера'}).click();
- await expect(dialog).toContainText('OAuth-приложение Microsoft платформы не настроено',{timeout:30000});
- await expect(dialog.getByRole('button',{name:'Настроить приложение платформы'})).toBeVisible();
 
- // The password route is still there, still folded away, and still filled in when opened.
- await expect(dialog.getByLabel('SMTP host')).toBeHidden();
- await dialog.getByRole('button',{name:/Расширенный способ подключения/}).click();
+ // The working route is what is on screen, already filled in, ready for an app password.
+ await expect(dialog.getByLabel('Пароль или пароль приложения')).toBeVisible({timeout:30000});
+ await expect(dialog.getByRole('button',{name:'Подключить и проверить'})).toBeVisible();
  await expect(dialog).toContainText('smtp.office365.com');
  await expect(dialog).toContainText('outlook.office365.com');
+ await expect(dialog.getByLabel('Пользователь')).toHaveValue('sales@outlook.com');
+
+ // And nothing about the platform's own OAuth setup appears: no button, no failure to report,
+ // no client id, no secret, no instructions. None of it is actionable from this screen.
+ await expect(dialog.getByRole('button',{name:/Подключить через Microsoft/})).toHaveCount(0);
+ await expect(dialog.getByRole('button',{name:'Настроить приложение платформы'})).toHaveCount(0);
+ const text=await dialog.innerText();
+ for(const leak of ['OAuth','Client ID','client id','client secret','Client secret','Адрес возврата'])
+  expect(text,`the connect dialog must not mention "${leak}"`).not.toContain(leak);
  await noOriginError(page);
 });
 

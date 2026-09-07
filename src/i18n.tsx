@@ -713,6 +713,7 @@ PostgreSQL подключён: данные переживают передеп�
 Достигнут суточный лимит домена|The domain's daily limit is reached
 Открыть готовность к отправке|Open sending readiness
 Настройки определены автоматически|Settings detected automatically
+Подключение по адресу и паролю приложения. Настройки сервера подставлены автоматически.|Connecting with the address and an app password. The server settings have been filled in automatically.
 Расширенный способ подключения (SMTP и IMAP по паролю приложения)|Advanced connection method (SMTP and IMAP with an app password)
 Подключение через Google пока недоступно.|Connecting through Google is not available yet.
 Подключение через Microsoft пока недоступно.|Connecting through Microsoft is not available yet.
