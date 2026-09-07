@@ -98,11 +98,9 @@ test('a Gmail address is offered Google first, and the advanced route is not an 
  await dialog.getByLabel('Рабочий e-mail').fill('sales@gmail.com');
  await dialog.getByRole('button',{name:'Определить провайдера'}).click();
 
- // No platform application is registered in the harness, so this is the case the tester hit:
- // the person is told plainly that it is the platform's setup that is missing, and — because
- // they are a superadmin here — exactly where to fix it.
- await expect(dialog).toContainText('OAuth-приложение Google платформы не настроено',{timeout:30000});
- await expect(dialog.getByRole('button',{name:'Настроить приложение платформы'})).toBeVisible();
+ // The harness registers the platform Google application, so this is the case the product is
+ // meant to reach: consent is the offer, in as many words.
+ await expect(dialog.getByRole('button',{name:'Подключить через Google'})).toBeVisible({timeout:30000});
 
  // SMTP and IMAP are the advanced route, folded away rather than presented as the way in.
  await expect(dialog.getByLabel('SMTP host')).toBeHidden();
@@ -118,6 +116,28 @@ test('a Gmail address is offered Google first, and the advanced route is not an 
  await expect(dialog.getByLabel('SMTP порт')).toHaveValue('465');
  await expect(dialog.getByLabel('IMAP порт')).toHaveValue('993');
  await expect(dialog.getByLabel('Пользователь')).toHaveValue('sales@gmail.com');
+ await noOriginError(page);
+});
+
+test('an unregistered platform application is the platform’s blocker, not the user’s task',async({page})=>{
+ await signIn(page,superadmin);
+ await openMailSettings(page);
+ await page.getByRole('button',{name:'Подключить ящик'}).click();
+
+ // The harness registers Google but not Microsoft, which is exactly the state the tester hit:
+ // the person is told plainly that it is the platform's setup that is missing, and — because
+ // they are a superadmin here — exactly where to fix it.
+ const dialog=page.getByRole('dialog');
+ await dialog.getByLabel('Рабочий e-mail').fill('sales@outlook.com');
+ await dialog.getByRole('button',{name:'Определить провайдера'}).click();
+ await expect(dialog).toContainText('OAuth-приложение Microsoft платформы не настроено',{timeout:30000});
+ await expect(dialog.getByRole('button',{name:'Настроить приложение платформы'})).toBeVisible();
+
+ // The password route is still there, still folded away, and still filled in when opened.
+ await expect(dialog.getByLabel('SMTP host')).toBeHidden();
+ await dialog.getByRole('button',{name:/Расширенный способ подключения/}).click();
+ await expect(dialog).toContainText('smtp.office365.com');
+ await expect(dialog).toContainText('outlook.office365.com');
  await noOriginError(page);
 });
 

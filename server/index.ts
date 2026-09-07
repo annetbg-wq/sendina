@@ -119,7 +119,12 @@ app.get('/api/accounts/:id/workspace',superadminOnly,async(req,res)=>
  res.json(await supportView(req.account!,String(req.params.id))));
 app.get('/api/support-log',superadminOnly,async(_req,res)=>res.json(await supportLog()));
 
-app.post('/api/send',(_req,res)=>res.status(409).json({error:'Отправка не подключена. Требуются проверенный почтовый провайдер, версионированные правила юрисдикций и подтверждение первой партии.'}));
+/** Real sending. Every rule is re-applied per message inside send.ts, at the moment it leaves. */
+app.post('/api/campaigns/:id/send',route((c,i)=>operations.send(c,i)));
+app.post('/api/domains/:id/limit',route((c,i)=>operations.setDomainLimit(c,i)));
+/** The old workspace-wide endpoint never named a campaign, so it cannot mean anything now that
+    sending is real. It says where to go rather than pretending to have sent something. */
+app.post('/api/send',(_req,res)=>res.status(409).json({error:'Отправка выполняется по кампании: POST /api/campaigns/:id/send. Требуются проверенный ящик, суточный лимит домена и подтверждение первой партии.'}));
 mountMailboxCallback(app);
 mountOauth(app);
 mountMcp(app);

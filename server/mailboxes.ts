@@ -104,6 +104,22 @@ const rules:[RegExp,string][]=[
 /** A stated heuristic, not an understanding of the message. Categories stay editable by hand. */
 export const classify=(text:string)=>rules.find(([pattern])=>pattern.test(text))?.[1]??'neutral';
 
+/** What the send path needs to use a mailbox, and nothing more: the credential and the OAuth
+    applications behind it. Kept here because this is the only module that may open a secret. */
+export type SenderCredentials={secret:any;apps:MailApps;email:string};
+export async function senderCredentials(accountId:string,email:string):Promise<SenderCredentials|null>{
+ const secret=await getSecret(accountId,email);
+ if(!secret)return null;
+ return {secret,apps:await appsFor(accountId),email:email.toLowerCase()};
+}
+
+/** One real message through a connected mailbox, bounded like every other network call here.
+    The subject and text are passed in and never composed: what is sent is what was approved. */
+export async function sendThrough(credentials:SenderCredentials,to:string,subject:string,text:string){
+ return withTimeout('send',limits().phase,
+  ()=>sendMessage(credentials.secret,to,subject,text,credentials.apps));
+}
+
 /** The four proofs, in the order they are attempted, and how each is named on screen. */
 export type StepName='auth'|'testSend'|'imap'|'incoming';
 export const stepLabels:Record<StepName,string>={auth:'вход',testSend:'отправка',imap:'приём',incoming:'чтение'};

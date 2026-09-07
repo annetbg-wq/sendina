@@ -665,6 +665,40 @@ PostgreSQL подключён: данные переживают передеп�
 Расширенная настройка|Advanced setup
 Расширенная настройка. Эти параметры есть в панели вашего почтового провайдера.|Advanced setup. These values are in your mail provider control panel.
 Изменить вручную|Edit by hand
+Готовность к отправке|Sending readiness
+Отправка возможна|Sending is possible
+Отправка невозможна|Sending is not possible
+Нет проверенного ящика|No verified mailbox
+Не задан суточный лимит домена|No daily domain limit set
+Суточный лимит домена исчерпан|The domain's daily limit is used up
+Отправка выключена на развёртывании|Sending is off on this deployment
+Ни один ящик пока не прошёл все четыре проверки, поэтому отправлять не через что.|No mailbox has passed all four checks yet, so there is nothing to send through.
+Контролируемая отправка|Controlled sending
+Писем в сутки|Messages a day
+Сохранить лимит|Save the limit
+Отправлено сегодня:|Sent today:
+Суточный лимит домена сохранён|The daily domain limit is saved
+Отправка|Sending
+Репетиция без отправки|Rehearse without sending
+Отправить по-настоящему|Send for real
+Репетиция: ничего не отправлено|Rehearsal: nothing was sent
+Репетиция выполнена: ничего не отправлено|The rehearsal has run: nothing was sent
+Результат отправки|What the run did
+Готово к отправке:|Ready to send:
+Уже отправлено:|Already sent:
+Прошло бы|Would have gone
+Отправлено|Sent
+Заблокировано|Blocked
+Ошибка|Error
+Отправитель:|Sender:
+Отправлено писем:|Messages sent:
+Разрешённые адреса:|Permitted addresses:
+Ни одного письма в очереди.|No messages in the queue.
+Адрес не в списке разрешённых|The address is not on the permitted list
+Ошибка отправки|Sending failed
+Письмо уже отправлено|The message was already sent
+Достигнут суточный лимит домена|The domain's daily limit is reached
+Открыть готовность к отправке|Open sending readiness
 Настройки определены автоматически|Settings detected automatically
 Расширенный способ подключения (SMTP и IMAP по паролю приложения)|Advanced connection method (SMTP and IMAP with an app password)
 Подключение через Google пока недоступно.|Connecting through Google is not available yet.

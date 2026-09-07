@@ -92,3 +92,54 @@ export function mailbox(port:number,file:string){
  watch.unref();
  return smtp;
 }
+
+/** A mail provider a mailbox can actually be connected to and send through, so the browser tests
+    can reach the one screen that was impossible to test before: a real send. It answers a token
+    refresh, accepts messages, and hands them back as the inbox — which is what the four checks
+    need in order to pass. */
+export function mailProvider(port:number){
+ const sent:{to:string;from:string;subject:string;text:string}[]=[];
+ const server=createServer((req,res)=>{
+  let body='';req.on('data',c=>body+=c);
+  req.on('end',()=>{
+   res.setHeader('Content-Type','application/json');
+   const url=req.url??'';
+   if(url==='/token')return res.end(JSON.stringify({access_token:'stub-access',refresh_token:'stub-refresh',scope:'gmail.send'}));
+   if(url.includes('/messages/send')){
+    const raw=Buffer.from(JSON.parse(body||'{}').raw??'','base64url').toString();
+    const header=(name:string)=>raw.match(new RegExp(`^${name}: (.*)$`,'im'))?.[1]?.trim()??'';
+    const encoded=header('Subject').match(/=\?UTF-8\?B\?(.+)\?=/i)?.[1];
+    const split=raw.search(/\r?\n\r?\n/);
+    const rest=split<0?'':raw.slice(split).replace(/^\s+/,'');
+    sent.push({to:header('To'),from:header('From'),
+     subject:encoded?Buffer.from(encoded,'base64').toString('utf8'):header('Subject'),
+     text:/base64/i.test(raw.slice(0,split<0?raw.length:split))
+      ?Buffer.from(rest.replace(/\s/g,''),'base64').toString('utf8'):rest});
+    return res.end(JSON.stringify({id:`stub-${sent.length}`}));
+   }
+   if(/\/messages\/stub-\d+/.test(url)){
+    const m=sent[Number(url.match(/stub-(\d+)/)![1])-1];
+    return res.end(JSON.stringify({internalDate:String(Date.now()),
+     payload:{headers:[{name:'From',value:m?.from??''},{name:'Subject',value:m?.subject??''},
+      {name:'Message-Id',value:'<stub@example>'}],
+      mimeType:'text/plain',body:{data:Buffer.from(m?.text??'').toString('base64url')}}}));
+   }
+   if(url.includes('/messages'))
+    return res.end(JSON.stringify({messages:sent.map((_,i)=>({id:`stub-${i+1}`})).reverse()}));
+   res.statusCode=404;res.end('{}');
+  });
+ });
+ return {server,sent};
+}
+
+/** A domain whose SPF, DKIM and DMARC are in order. These cannot be conjured up in a test run,
+    and without them no domain is ever ready, so no send could ever be exercised. */
+export function dnsRecords(port:number){
+ return createServer((req,res)=>{
+  const name=new URL(req.url??'','http://x').searchParams.get('name')??'';
+  res.setHeader('Content-Type','application/json');
+  res.end(JSON.stringify({records:name.startsWith('_dmarc.')?['v=DMARC1; p=none']
+   :name.includes('._domainkey.')?['v=DKIM1; k=rsa; p=MIIBstub']
+   :['v=spf1 include:stub -all']}));
+ });
+}

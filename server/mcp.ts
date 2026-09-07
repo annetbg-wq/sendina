@@ -18,7 +18,7 @@ export function mountMcp(app:Express){
  const jwks=process.env.OAUTH_JWKS_URL?createRemoteJWKSet(new URL(process.env.OAUTH_JWKS_URL)):null;
  const authorizationServers=()=>oauthEnabled()?[publicUrl()]:issuer?[issuer]:[];
  const method=()=>oauthEnabled()?'OAuth 2.1':issuer&&jwks?'OAuth 2.1 (внешний провайдер)':process.env.MCP_TOKEN?'Токен разработчика':'Не настроено';
- const tools=['get_capabilities','get_dashboard','list_campaigns','get_campaign','create_campaign','find_recipients','import_contacts','confirm_recipient','prepare_messages','launch_preview','set_control_mode','approve_first_batch','set_campaign_status','record_reply','exclude_recipient','emergency_stop','list_mailboxes','verify_mailbox','sync_replies','test_mailbox','research_opportunities','list_opportunities','research_markets_by_country','research_markets_by_niche','assess_market','list_markets','save_favourite','remove_favourite','create_test_from_research','list_threads','get_thread','set_thread_action','get_analytics','list_locations','propose_recipients','save_opportunities','save_market_results','get_sender_status'];
+ const tools=['get_capabilities','get_dashboard','list_campaigns','get_campaign','create_campaign','find_recipients','import_contacts','confirm_recipient','prepare_messages','launch_preview','set_control_mode','approve_first_batch','set_campaign_status','record_reply','exclude_recipient','emergency_stop','list_mailboxes','verify_mailbox','sync_replies','test_mailbox','research_opportunities','list_opportunities','research_markets_by_country','research_markets_by_niche','assess_market','list_markets','save_favourite','remove_favourite','create_test_from_research','list_threads','get_thread','set_thread_action','get_analytics','list_locations','propose_recipients','save_opportunities','save_market_results','get_sender_status','send_campaign','set_domain_limit'];
 
  app.get(['/.well-known/oauth-protected-resource','/.well-known/oauth-protected-resource/mcp'],(_req,res)=>
   res.json({resource:resourceUrl(),authorization_servers:authorizationServers(),scopes_supported:['sendina:read','sendina:write'],bearer_methods_supported:['header'],resource_name:'Sendina'}));
@@ -185,6 +185,15 @@ export function mountMcp(app:Express){
 
   register('get_sender_status','Everything that decides whether a real message may leave: connected mailboxes, which sender would be used, readiness, sendingEnabled, blockers and the last result of each of the four mailbox checks.',
    {},false,true,()=>operations.senderStatus(account));
+
+  // Sending, which is the only tool here that does something a recipient can see. It re-applies
+  // the policy engine, the readiness rules and the emergency stop to every individual message at
+  // the moment that message leaves, so nothing about calling it from a chat weakens any of them.
+  register('send_campaign','Send the prepared letters of a campaign for real. Only existing prepared drafts are sent, never newly composed text. Every rule — emergency stop, campaign status, exclusions, replies, duplicates, legal basis, contact reason, verified source, approval mode, domain readiness and the daily domain quota — is re-checked per message at the moment it leaves. Use dryRun first: it answers with the same decisions and sends nothing.',
+   {id:z.string(),limit:z.number().int().min(1).max(200).optional(),dryRun:z.boolean().optional()},
+   true,false,a=>operations.send(account,a));
+  register('set_domain_limit','Set how many messages a day a domain may send. It starts at zero, which blocks sending, and only an operator raises it.',
+   {id:z.string(),limit:z.number().int().min(0).max(2000)},true,true,a=>operations.setDomainLimit(account,a));
 
   const transport=new StreamableHTTPServerTransport({sessionIdGenerator:undefined,enableJsonResponse:true});
   res.on('close',()=>{void transport.close();void server.close();});

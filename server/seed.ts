@@ -103,9 +103,18 @@ export function normalize(s:any):State{
     c.createdAt??=s.audit[s.audit.length-1]?.at??new Date().toISOString();
     c.location??=c.market?{countries:[c.market],region:'',city:'',auto:false}:anywhere();
   }
-  for(const m of s.messages)m.at??=null;
+  for(const m of s.messages){
+    m.at??=null;
+    // What the send path records: which mailbox carried it and what the server said.
+    m.sentThrough??='';m.sendDetail??='';
+    // A message left mid-flight by a restart is a draft again: it was never confirmed as sent.
+    if(m.status==='sending')m.status='draft';
+  }
   for(const d of s.domains){
     d.dns??=noDns();
+    d.limit??=0;d.used??=0;
+    /** The day the used count belongs to, so a daily allowance is actually daily. */
+    d.usedOn??=null;
     d.mailboxes=(d.mailboxes??[]).map((m:any)=>{
       const merged=typeof m==='string'?box(m):{...box(m.email),...m};
       for(const field of ['auth','testSend','imap','incoming'])

@@ -12,6 +12,8 @@ import {aiReady,aiModel,complete} from './ai';
 import {searchReady,searchProvider} from './search';
 import {noDns,box,anywhere,demoSeed,seed as seedState,type State,type Research} from './seed';
 import {domainReadiness,mailboxReadiness} from './readiness';
+import {duplicateEmails} from './duplicates';
+import {sendCampaign,sendingConfig,senderMailbox,allowanceOf} from './send';
 import {stepLabels,type StepName} from './mailboxes';
 import {countries,regions,locationLabel,normalizeLocation} from './geo';
 import {researchOpportunities,researchMarkets,campaignDraft,researchFromInput,importedItemSchema,RESULTS} from './research';
@@ -34,22 +36,41 @@ const findResearch=(s:State,id:string):Research=>{
  return item;
 };
 
-/** Addresses of this campaign that also sit in another campaign of the workspace.
+export {duplicateEmails} from './duplicates';
 
-    A proposed recipient has no address yet, and two of those are not the same person written
-    twice — they are two organisations nobody has found an address for. Counting them as repeats
-    blocked every proposal with DUPLICATE_RECIPIENT, which hid the real reason it could not be
-    sent to: that its source is not verified. An absent address is not an address. */
-export function duplicateEmails(s:State,campaignId:string){
- const mine=s.contacts.filter(c=>c.campaignId===campaignId&&c.email);
- const elsewhere=new Set(s.contacts.filter(c=>c.campaignId!==campaignId&&c.email).map(c=>c.email));
- const seen=new Set<string>(),repeated=new Set<string>();
- for(const c of mine){if(seen.has(c.email))repeated.add(c.email);seen.add(c.email);}
- return [...new Set([...mine.filter(c=>elsewhere.has(c.email)).map(c=>c.email),...repeated])];
-}
+/** TXT records of a name. Tests point this at a local stub the same way the model, the web search,
+    the autoconfig database and the mail providers are already pointed at one, because a domain
+    with real SPF, DKIM and DMARC cannot be conjured up inside a test run. */
+const txtLookup=async(name:string):Promise<string[]>=>{
+ const base=process.env.DNS_TXT_BASE_URL;
+ if(base){
+  try{
+   const r=await fetch(`${base.replace(/\/$/,'')}/txt?name=${encodeURIComponent(name)}`);
+   if(!r.ok)return [];
+   const data=await r.json();
+   return Array.isArray(data?.records)?data.records.map(String):[];
+  }catch{return [];}
+ }
+ try{return (await resolveTxt(name)).map(r=>r.join(''));}catch{return [];}
+};
 
 /** The first domain that is genuinely ready to send: connected, test sent and DNS in place. */
 const senderDomain=(s:State)=>s.domains.find(d=>domainReadiness(d,s.stopped).ready)??null;
+
+/** Whether a real message could leave this workspace right now, and if not, the first reason.
+    Reported the same way everywhere so no screen and no connector can disagree about it. */
+function sendingState(s:State){
+ const config=sendingConfig();
+ const chosen=senderMailbox(s);
+ const allowance=chosen?allowanceOf(chosen.domain):null;
+ const blocker=
+  !config.enabled?'SENDING_DISABLED_ON_DEPLOYMENT':
+  s.stopped?'EMERGENCY_STOP':
+  !chosen?'SENDER_NOT_READY':
+  allowance!.limit<=0?'DOMAIN_LIMIT_NOT_SET':
+  allowance!.used>=allowance!.limit?'DOMAIN_LIMIT':null;
+ return {sendingEnabled:!blocker,sendingBlocker:blocker};
+}
 
 const decide=(s:State,c:any,p:any,duplicates:string[],sender:any)=>policy({
  stopped:s.stopped,status:c.status,suppressed:s.suppressed.includes(p.email),
@@ -104,6 +125,9 @@ export const schemas={
  analytics:z.object({period:z.string().max(20).default('30d'),from:z.string().max(40).optional(),
   to:z.string().max(40).optional(),campaign:z.string().max(80).default('all')}),
  demo:z.object({enabled:z.boolean()}),
+ /** How many messages a day this domain may send. Zero means none, which is where it starts:
+     a sending allowance is a decision about reputation, not something to be assumed. */
+ domainLimit:z.object({id:z.string().min(1),limit:z.number().int().min(0).max(2000)}),
  /** A candidate somebody else researched. Same fields the internal search has to produce, so
      nothing reaches the store through a looser door than the model's own answers do. */
  proposeRecipients:z.object({id:z.string().min(1),
@@ -136,7 +160,9 @@ export const operations={
   recipients:{setting,effective:resolveMode(setting,searchReady(config),placesReady(config))},
   connections:maskSettings(own),
   storage:{postgres:Boolean(pool),durable:Boolean(pool)},
-  sendingEnabled:false};},
+  /** Sending exists now, so this reports whether it could actually happen here rather than
+      stating a constant: the deployment has to allow it and a mailbox has to have proved itself. */
+  ...sendingState(s)};},
 
  /** Everything that decides whether a real message may leave, in one answer.
 
@@ -157,22 +183,33 @@ export const operations={
   const sender=mailboxes.find((m:any)=>m.readiness.ready)??null;
   const domains=st.domains.map((d:any)=>({id:d.id,name:d.name,dns:d.dns,limit:d.limit,used:d.used,
    readiness:domainReadiness(d,st.stopped)}));
+  const chosen=senderMailbox(st);
+  const config=sendingConfig();
+  const allowance=chosen?allowanceOf(chosen.domain):null;
   return {
    stopped:st.stopped,
-   /** Sending is not built yet, and this says so rather than letting a caller infer readiness. */
-   sendingEnabled:false,
+   ...sendingState(st),
+   /** What the deployment itself permits, apart from what this workspace is ready for. */
+   deployment:{sendingAllowed:config.enabled,maxPerRun:config.maxPerRun,
+    allowlist:config.allowlist.length?config.allowlist:null},
    sender:sender?{email:sender.email,domain:sender.domain,provider:sender.provider}:null,
+   /** The day's allowance of the sending domain, which is a blocker in its own right. */
+   allowance:allowance?{used:allowance.used,limit:allowance.limit,
+    remaining:Math.max(0,allowance.limit-allowance.used)}:null,
    ready:Boolean(sender)&&!st.stopped,
    blockers:[...(st.stopped?['EMERGENCY_STOP']:[]),
+    ...(config.enabled?[]:['SENDING_DISABLED_ON_DEPLOYMENT']),
     ...(mailboxes.length?[]:['NO_MAILBOX']),
-    ...(sender?[]:mailboxes.flatMap((m:any)=>m.readiness.blockers))]
+    ...(sender?[]:mailboxes.flatMap((m:any)=>m.readiness.blockers)),
+    ...(allowance&&allowance.limit<=0?['DOMAIN_LIMIT_NOT_SET']:[]),
+    ...(allowance&&allowance.limit>0&&allowance.used>=allowance.limit?['DOMAIN_LIMIT']:[])]
     .filter((b,i,all)=>all.indexOf(b)===i),
    mailboxes,domains};},
 
  dashboard:async(ctx:Ctx)=>{const s=await read(ctx.accountId);return {demo:s.demo,stopped:s.stopped,campaigns:s.campaigns.length,
   contacts:s.contacts.length,messages:s.messages.length,replies:s.replies.length,
   sent:s.campaigns.reduce((n,c)=>n+c.sent,0),positive:s.campaigns.reduce((n,c)=>n+c.positive,0),
-  suppressed:s.suppressed.length,sendingEnabled:false};},
+  suppressed:s.suppressed.length,...sendingState(s)};},
 
  getCampaign:async(ctx:Ctx,input:unknown)=>{const {id}=schemas.campaignId.parse(input);const s=await read(ctx.accountId);
   return {campaign:campaignOf(s,id),contacts:s.contacts.filter(c=>c.campaignId===id),
@@ -223,7 +260,7 @@ export const operations={
 
  checkDomain:async(ctx:Ctx,input:unknown)=>{const {id,selector}=schemas.domainCheck.parse(input);
   const d=(await read(ctx.accountId)).domains.find(d=>d.id===id);if(!d)throw Error('Домен не найден');
-  const lookup=async(n:string)=>{try{return (await resolveTxt(n)).map(r=>r.join(''));}catch{return [];}};
+  const lookup=txtLookup;
   const [spf,dkim,dmarc]=await Promise.all([lookup(d.name),lookup(`${selector}._domainkey.${d.name}`),lookup(`_dmarc.${d.name}`)]);
   const checks={spf:spf.some(v=>v.startsWith('v=spf1')),dkim:dkim.some(v=>v.includes('p=')&&!v.endsWith('p=')),dmarc:dmarc.some(v=>v.startsWith('v=DMARC1'))};
   // A DNS record is evidence about the domain. It is never a connection and never grants readiness.
@@ -374,6 +411,21 @@ export const operations={
    if(['unsubscribe','negative'].includes(body.category)&&!s.suppressed.includes(email))s.suppressed.push(email);
    if(body.category==='positive')c.positive++;
    audit(s,`Получен ответ ${email}: ${body.category}`);return r;});},
+
+ /** The day's sending allowance for one domain. It starts at zero and only an operator raises
+     it: a limit is a judgement about the reputation of a domain, and guessing one on somebody's
+     behalf is how a domain gets burned. The policy engine blocks on it like any other rule. */
+ setDomainLimit:(ctx:Ctx,input:unknown)=>{const {id,limit}=schemas.domainLimit.parse(input);
+  return change(ctx.accountId,s=>{const d=s.domains.find(d=>d.id===id);
+   if(!d)throw Error('Домен не найден');
+   d.limit=limit;
+   audit(s,`Суточный лимит отправки ${d.name}: ${limit}.`);
+   return {id:d.id,name:d.name,limit:d.limit,used:d.used??0,
+    readiness:domainReadiness(d,s.stopped)};});},
+
+ /** Sends the prepared letters of one campaign for real. The rules are re-applied per message at
+     the moment it leaves; see send.ts. A dry run answers the same question and sends nothing. */
+ send:(ctx:Ctx,input:unknown)=>sendCampaign(ctx,input),
 
  suppress:(ctx:Ctx,input:unknown)=>{const email=schemas.suppress.parse(input).email.toLowerCase();
   return change(ctx.accountId,s=>{if(!s.suppressed.includes(email))s.suppressed.push(email);

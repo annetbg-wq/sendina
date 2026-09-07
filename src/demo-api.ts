@@ -29,6 +29,13 @@ export async function demoApi(path:string,body?:any){
  if(path==='/integrations')return {mcp:{endpoint:'Not configured',authentication:'Not configured',ready:false,transport:'Streamable HTTP',tools:['research_opportunities','list_opportunities','research_markets_by_country','research_markets_by_niche','create_test_from_research','list_threads','get_analytics','create_campaign','exclude_recipient']}};
  // Threads and analytics are the same functions the server runs, over this browser's workspace.
  if(path==='/threads')return {threads:threads(s),outcomes};
+ // The demonstration has no mailbox and no server to send through, and says so rather than
+ // showing a readiness it could not act on.
+ if(path==='/sender')return {stopped:s.stopped,sendingEnabled:false,sendingBlocker:'SENDER_NOT_READY',
+  deployment:{sendingAllowed:false,maxPerRun:0,allowlist:null},
+  sender:null,allowance:null,ready:false,blockers:['NO_MAILBOX'],mailboxes:[],
+  domains:s.domains.map(d=>({id:d.id,name:d.name,dns:d.dns,limit:d.limit,used:d.used,
+   readiness:{ready:false,blockers:['NO_MAILBOX']}}))};
  if(path==='/opportunities')return {results:s.research.opportunities?.items??[],at:s.research.opportunities?.at??null,input:s.research.opportunities?.input??null,favourites:s.favourites.filter(f=>f.kind==='opportunity')};
  if(path==='/markets')return {results:s.research.markets?.items??[],at:s.research.markets?.at??null,input:s.research.markets?.input??null,favourites:s.favourites.filter(f=>f.kind==='market')};
  if(path==='/analytics')return analytics(s,body??{});
@@ -69,6 +76,8 @@ export async function demoApi(path:string,body?:any){
  else if(path==='/opportunities/research'||path==='/markets/research')throw needsServer('Исследование выполняется моделью на сервере.');
  else if(path==='/research/campaign')throw needsServer('Создание теста из исследования выполняется на сервере.');
  else if(path.match(/^\/domains\/[^/]+\/check$/))throw needsServer('Проверка DNS выполняется на сервере.');
+ else if(path.match(/^\/domains\/[^/]+\/limit$/))throw needsServer('Суточный лимит домена задаётся на сервере.');
+ else if(path.match(/^\/campaigns\/[^/]+\/send$/))throw needsServer('Отправка выполняется на сервере, через подключённый ящик.');
  else if(path.match(/^\/campaigns\/[^/]+\/find$/))throw needsServer('Поиск адресатов выполняется на сервере.');
  else if(path==='/contacts/confirm')throw needsServer('Подтверждение адресата выполняется на сервере.');
  else if(path==='/recommend-market'||path.endsWith('/launch-preview')||path.endsWith('/control')||path.endsWith('/approve'))throw needsServer('Это действие выполняется на сервере.');
