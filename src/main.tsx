@@ -166,14 +166,14 @@ function App(){
     {sender.sender
      ?<p className="muted">Письма уйдут через <b data-user-content>{sender.sender.email}</b>.</p>
      :<p className="muted">Ни один ящик пока не прошёл все четыре проверки, поэтому отправлять не через что.</p>}
-    {sender.allowance&&<p className="tiny muted">Суточный лимит домена: израсходовано {sender.allowance.used} из {sender.allowance.limit},
-     осталось {sender.allowance.remaining}.</p>}
+    {sender.allowance&&<p className="tiny muted">Суточный лимит домена: {sender.allowance.used} / {sender.allowance.limit}
+     · осталось {sender.allowance.remaining}</p>}
     {!sender.deployment?.sendingAllowed&&<div className="alert error" role="alert">
-     Отправка выключена на этом развёртывании. Её включает администратор переменной окружения <code>SENDING_ENABLED=1</code>.</div>}
+     Отправка выключена на этом развёртывании. Её включает администратор переменной окружения SENDING_ENABLED.</div>}
     {sender.deployment?.allowlist&&<div className="info-banner compact"><ShieldCheck size={20}/><div>
      <b>Контролируемая отправка</b>
-     <p className="tiny">Письма могут уйти только на эти адреса, что бы ни было в кампании:
-      <span data-user-content> {sender.deployment.allowlist.join(', ')}</span>.</p></div></div>}
+     <p className="tiny">Письма могут уйти только на эти адреса, что бы ни было в кампании.</p>
+     <p className="tiny" data-user-content>{sender.deployment.allowlist.join(', ')}</p></div></div>}
     {sender.blockers?.length>0&&<ul className="blockers">{sender.blockers.map((b:string)=>
      <li key={b}>{blockers[b]??b}</li>)}</ul>}
    </div></section>}
@@ -682,8 +682,7 @@ function App(){
    const sent=state.messages.filter(m=>m.campaignId===c.id&&m.status==='sent').length;
    return <div className="send-block">
     <h3><Send size={16}/>Отправка</h3>
-    <p className="tiny muted">Уходят только подготовленные письма — ровно те, что вы видели в предпросмотре.
-     Правила проверяются заново для каждого письма в момент отправки.</p>
+    <p className="tiny muted">Уходят только подготовленные письма — ровно те, что вы видели в предпросмотре. Правила проверяются заново для каждого письма в момент отправки.</p>
     <p className="tiny muted">Готово к отправке: {drafts} · Уже отправлено: {sent}</p>
     {c.status!=='active'&&<div className="alert error" role="alert">
      Кампания не активна: правила не пропустят ни одного письма. Активируйте её на экране «Рассылки».</div>}
@@ -706,8 +705,8 @@ function App(){
  {modal==='sendresult'&&sendRun&&<>
   <div className={'info-banner compact '+(sendRun.dryRun?'':'sent')}><Info size={20}/><div>
    <b>{sendRun.dryRun?'Репетиция: ничего не отправлено':`Отправлено писем: ${sendRun.sent}`}</b>
-   <p className="tiny">Отправитель: <span data-user-content>{sendRun.sender?.email}</span> ·
-    В очереди было {sendRun.queued} · Заблокировано правилами {sendRun.blocked} · Ошибок {sendRun.failed}</p>
+   <p className="tiny">Отправитель: <span data-user-content>{sendRun.sender?.email}</span></p>
+   <p className="tiny">В очереди: {sendRun.queued} · Заблокировано правилами: {sendRun.blocked} · Ошибок: {sendRun.failed}</p>
    {sendRun.allowlist&&<p className="tiny">Разрешённые адреса: <span data-user-content>{sendRun.allowlist.join(', ')}</span></p>}</div></div>
   <ol className="send-results">{sendRun.results.map((r:any)=>
    <li key={r.messageId} className={r.status}>

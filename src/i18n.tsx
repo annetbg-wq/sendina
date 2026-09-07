@@ -666,6 +666,19 @@ PostgreSQL подключён: данные переживают передеп�
 Расширенная настройка. Эти параметры есть в панели вашего почтового провайдера.|Advanced setup. These values are in your mail provider control panel.
 Изменить вручную|Edit by hand
 Готовность к отправке|Sending readiness
+Письма уйдут через|Messages will go out through
+Суточный лимит домена:|The domain's daily limit:
+осталось|remaining
+Отправка выключена на этом развёртывании. Её включает администратор переменной окружения SENDING_ENABLED.|Sending is off on this deployment. An administrator turns it on with the SENDING_ENABLED environment variable.
+Письма могут уйти только на эти адреса, что бы ни было в кампании.|Messages can only reach these addresses, whatever the campaign holds.
+Уходят только подготовленные письма — ровно те, что вы видели в предпросмотре. Правила проверяются заново для каждого письма в момент отправки.|Only prepared letters go out — exactly the ones you saw in the preview. The rules are re-checked for every message at the moment it leaves.
+Кампания не активна: правила не пропустят ни одного письма. Активируйте её на экране «Рассылки».|The campaign is not active, so the rules will let nothing through. Activate it on the Campaigns screen.
+В очереди:|In the queue:
+Заблокировано правилами:|Blocked by the rules:
+Ошибок:|Errors:
+Отправлено:|Sent:
+заблокировано правилами:|blocked by the rules:
+ошибок:|errors:
 Отправка возможна|Sending is possible
 Отправка невозможна|Sending is not possible
 Нет проверенного ящика|No verified mailbox

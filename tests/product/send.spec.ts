@@ -85,7 +85,7 @@ test('an operator sets the daily allowance by hand, and only then can anything b
  const panel=page.locator('.send-state');
  await expect(panel).toContainText('Отправка возможна',{timeout:15000});
  await expect(panel).toContainText(mailbox);
- await expect(panel).toContainText('израсходовано 0 из 3');
+ await expect(panel).toContainText('Суточный лимит домена: 0 / 3');
  await noOriginError(page);
 });
 
