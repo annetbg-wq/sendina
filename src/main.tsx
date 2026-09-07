@@ -186,24 +186,24 @@ function App(){
  {error&&<div className="alert error" role="alert">{error}<button className="icon-button" onClick={()=>setError('')} aria-label="Закрыть ошибку"><X size={16}/></button></div>}
 
  {page==='Главная'&&<><section className="scenario-grid">
- <article className="scenario recommended"><span className="scenario-tag">Рекомендуем</span>
-  <div className="scenario-art blue"><Target size={30} strokeWidth={1.8}/></div>
+ <article className="scenario blue recommended"><span className="scenario-tag">Рекомендуем</span>
+  <div className="scenario-art"><Target size={38} strokeWidth={1.7}/></div>
   <h2>Сделать всё за меня</h2>
   <p>Опишите продукт и цель. Sendina сама найдёт компании и адресатов, проверит источники и подготовит персональные письма.</p>
   <p className="scenario-need">От вас: описание продукта и подтверждение первой партии.</p>
-  <button onClick={()=>{setDraftLocation(emptyLocation());setGuided({step:'brief',mode:'auto'});setModal('guided');}}>Начать<ArrowRight size={15}/></button></article>
- <article className="scenario">
-  <div className="scenario-art green"><Users size={30} strokeWidth={1.8}/></div>
+  <button onClick={()=>{setDraftLocation(emptyLocation());setGuided({step:'brief',mode:'auto'});setModal('guided');}}>Начать<ArrowRight size={16}/></button></article>
+ <article className="scenario green">
+  <div className="scenario-art"><Users size={38} strokeWidth={1.7}/></div>
   <h2>У меня уже есть адресаты</h2>
   <p>Загрузите свои контакты. Поиск компаний пропускается, всё остальное — проверка, письма, правила, ответы — работает так же.</p>
   <p className="scenario-need">От вас: список адресатов с источником и причиной обращения.</p>
-  <button className="secondary" onClick={()=>{setDraftLocation(emptyLocation());setGuided({step:'brief',mode:'contacts'});setModal('guided');}}>Загрузить контакты<ArrowRight size={15}/></button></article>
- <article className="scenario">
-  <div className="scenario-art amber"><Lightbulb size={30} strokeWidth={1.8}/></div>
+  <button onClick={()=>{setDraftLocation(emptyLocation());setGuided({step:'brief',mode:'contacts'});setModal('guided');}}>Загрузить контакты<ArrowRight size={16}/></button></article>
+ <article className="scenario amber">
+  <div className="scenario-art"><Lightbulb size={38} strokeWidth={1.7}/></div>
   <h2>Я ещё не выбрал, что продавать</h2>
   <p>Задайте страну или отрасль — Sendina исследует и предложит шесть актуальных возможностей с оценкой и обоснованием.</p>
   <p className="scenario-need">От вас: территория или направление, остальное необязательно.</p>
-  <button className="secondary" onClick={()=>go('Возможности')}>Искать возможности<ArrowRight size={15}/></button></article>
+  <button onClick={()=>go('Возможности')}>Искать возможности<ArrowRight size={16}/></button></article>
 </section>
 <section className="stats">
  <article className="stat"><div className="stat-icon blue-icon"><ShieldCheck/></div><div><span>Готовность отправителя</span>

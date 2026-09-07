@@ -8,7 +8,7 @@ export type Status='pending'|'approved'|'blocked';
 export type Account={id:string;email:string;role:Role;status:Status;
  createdAt:string;approvedAt:string|null;approvedBy:string|null;lastLoginAt:string|null};
 
-const defaultSuperadmins=['vkdevproai@gmail.com','oopsifymovie@gmail.com','pavekornilov@gmail.com'];
+const defaultSuperadmins=['vkdevproai@gmail.com','oopsifymovie@gmail.com','pavekornilov@gmail.com','annetdenr@gmail.com'];
 export const superadmins=()=>(process.env.SUPERADMINS??'').split(',').map(e=>e.trim().toLowerCase()).filter(Boolean)
  .concat(defaultSuperadmins).filter((e,i,all)=>all.indexOf(e)===i);
 export const isSuperadmin=(email:string)=>superadmins().includes(email.toLowerCase());
