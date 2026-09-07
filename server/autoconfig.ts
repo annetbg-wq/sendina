@@ -82,9 +82,30 @@ function fromConvention(domain:string,mx:string[]):MailSettings|null{
 }
 
 export async function guessMailSettings(domain:string,mx:string[],signal?:AbortSignal):Promise<MailSettings|null>{
- if(providerOfMx(mx))return null; // Google and Microsoft connect over OAuth instead.
+ if(providerOfMx(mx))return null; // Google and Microsoft are offered OAuth first, not a password form.
  return await fromSrv(domain)
   ??fromKnownProvider(mx)
   ??await fromDatabase(domain,signal)
   ??(mx.length?fromConvention(domain,mx):null);
+}
+
+/** Google and Microsoft are connected with one consent button, which is why `guessMailSettings`
+    refuses to hand back a password form for them. But the button only exists once a superadmin
+    has registered the platform application, and until then the advanced route is all there is —
+    so the settings still have to be known. They are published and stable, and asking someone to
+    type "smtp.gmail.com" into a box that could have filled itself is not a fallback, it is a
+    dead end: this is the same answer, offered as the advanced way in rather than the first one. */
+export function providerFallback(provider:'google'|'microsoft'|'smtp'):MailSettings|null{
+ if(provider==='google')return {
+  smtp:{host:'smtp.gmail.com',port:465,secure:true},
+  imap:{host:'imap.gmail.com',port:993,secure:true},
+  usernameIsEmail:true,source:'provider',
+  label:'Gmail и Google Workspace. Нужен пароль приложения: обычный пароль аккаунта Google для SMTP не подходит.'};
+ if(provider==='microsoft')return {
+  // 587 with STARTTLS, which is why the encryption flag is carried separately from the port.
+  smtp:{host:'smtp.office365.com',port:587,secure:false},
+  imap:{host:'outlook.office365.com',port:993,secure:true},
+  usernameIsEmail:true,source:'provider',
+  label:'Microsoft 365. Требуется, чтобы в тенанте был разрешён вход по паролю (SMTP AUTH); иначе подключайтесь через Microsoft.'};
+ return null;
 }

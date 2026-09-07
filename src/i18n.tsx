@@ -664,6 +664,95 @@ PostgreSQL подключён: данные переживают передеп�
 Рабочий e-mail|Work e-mail
 Расширенная настройка|Advanced setup
 Расширенная настройка. Эти параметры есть в панели вашего почтового провайдера.|Advanced setup. These values are in your mail provider control panel.
+Изменить вручную|Edit by hand
+Готовность к отправке|Sending readiness
+Письма уйдут через|Messages will go out through
+Суточный лимит домена:|The domain's daily limit:
+осталось|remaining
+Отправка выключена на этом развёртывании. Её включает администратор переменной окружения SENDING_ENABLED.|Sending is off on this deployment. An administrator turns it on with the SENDING_ENABLED environment variable.
+Письма могут уйти только на эти адреса, что бы ни было в кампании.|Messages can only reach these addresses, whatever the campaign holds.
+Уходят только подготовленные письма — ровно те, что вы видели в предпросмотре. Правила проверяются заново для каждого письма в момент отправки.|Only prepared letters go out — exactly the ones you saw in the preview. The rules are re-checked for every message at the moment it leaves.
+Кампания не активна: правила не пропустят ни одного письма. Активируйте её на экране «Рассылки».|The campaign is not active, so the rules will let nothing through. Activate it on the Campaigns screen.
+В очереди:|In the queue:
+Заблокировано правилами:|Blocked by the rules:
+Ошибок:|Errors:
+Отправлено:|Sent:
+заблокировано правилами:|blocked by the rules:
+ошибок:|errors:
+Отправка возможна|Sending is possible
+Отправка невозможна|Sending is not possible
+Нет проверенного ящика|No verified mailbox
+Не задан суточный лимит домена|No daily domain limit set
+Суточный лимит домена исчерпан|The domain's daily limit is used up
+Отправка выключена на развёртывании|Sending is off on this deployment
+Ни один ящик пока не прошёл все четыре проверки, поэтому отправлять не через что.|No mailbox has passed all four checks yet, so there is nothing to send through.
+Контролируемая отправка|Controlled sending
+Писем в сутки|Messages a day
+Сохранить лимит|Save the limit
+Отправлено сегодня:|Sent today:
+Суточный лимит домена сохранён|The daily domain limit is saved
+Отправка|Sending
+Репетиция без отправки|Rehearse without sending
+Отправить по-настоящему|Send for real
+Репетиция: ничего не отправлено|Rehearsal: nothing was sent
+Репетиция выполнена: ничего не отправлено|The rehearsal has run: nothing was sent
+Результат отправки|What the run did
+Готово к отправке:|Ready to send:
+Уже отправлено:|Already sent:
+Прошло бы|Would have gone
+Отправлено|Sent
+Заблокировано|Blocked
+Ошибка|Error
+Отправитель:|Sender:
+Отправлено писем:|Messages sent:
+Разрешённые адреса:|Permitted addresses:
+Ни одного письма в очереди.|No messages in the queue.
+Адрес не в списке разрешённых|The address is not on the permitted list
+Ошибка отправки|Sending failed
+Письмо уже отправлено|The message was already sent
+Достигнут суточный лимит домена|The domain's daily limit is reached
+Открыть готовность к отправке|Open sending readiness
+Настройки определены автоматически|Settings detected automatically
+Расширенный способ подключения (SMTP и IMAP по паролю приложения)|Advanced connection method (SMTP and IMAP with an app password)
+Подключение через Google пока недоступно.|Connecting through Google is not available yet.
+Подключение через Microsoft пока недоступно.|Connecting through Microsoft is not available yet.
+Приложение платформы ещё не настроено администратором Sendina. Пока этого не произошло, ящик можно подключить расширенным способом — по паролю приложения.|The platform application has not been set up by a Sendina administrator yet. Until it is, the mailbox can be connected the advanced way, with an app password.
+OAuth-приложение Google платформы не настроено.|The platform Google OAuth application is not configured.
+OAuth-приложение Microsoft платформы не настроено.|The platform Microsoft OAuth application is not configured.
+Настроить приложение платформы|Set up the platform application
+Адрес возврата для приложения:|Redirect URI for the application:
+Проверка ящика|Mailbox check
+Скрыть результат|Hide the result
+Остановилась:|Stopped at:
+Причина:|Reason:
+Сервер прервал шаг по таймауту — узел принял соединение, но не ответил. Проверьте host, порт и шифрование.|The server cut the step off at its deadline: the host accepted the connection and then did not answer. Check the host, the port and the encryption.
+Провайдер отклонил пароль. Для Gmail и Microsoft 365 нужен пароль приложения, а не обычный пароль аккаунта.|The provider rejected the password. Gmail and Microsoft 365 need an app password, not the ordinary account password.
+Узел не найден в DNS — проверьте имя сервера.|The host was not found in DNS: check the server name.
+Чтение письма|Reading the message
+Отправка|Sending
+Приём|Receiving
+Поиск организаций|Organisation search
+Первый слой подбора адресатов: реальные организации из справочника, до того как что-либо ищет человека или адрес. Провайдер — Google Places. Это платформенная настройка: ключ задаётся один раз для всех аккаунтов, отдельных полей у аккаунта здесь нет.|The first layer of recipient research: real organisations from a directory, before anything looks for a person or an address. The provider is Google Places. This is a platform setting: the key is entered once for every account, and there are no per-account fields here.
+К Google Workspace отношения не имеет: это разные приложения и разные ключи. Google Workspace — подключение почтового ящика, Google Places — справочник организаций.|It has nothing to do with Google Workspace: these are different applications and different keys. Google Workspace connects a mailbox; Google Places is a directory of organisations.
+Настроить на экране «Аккаунты»|Set up on the Accounts screen
+Настраивает администратор Sendina.|Set up by a Sendina administrator.
+Провайдер:|Provider:
+Google Places API key|Google Places API key
+Справочник реальных организаций для подбора адресатов. Это|A directory of real organisations for recipient research. This is
+не Google Workspace: отдельное приложение и отдельный ключ. Нужен Places API (New), включённый в проекте Google Cloud. Ключ хранится зашифрованным и обратно в интерфейс не возвращается.|not Google Workspace: a separate application and a separate key. It needs the Places API (New) enabled in a Google Cloud project. The key is stored encrypted and is never returned to the interface.
+Системная почта|Platform mail
+Настроена|Configured
+Не настроена|Not configured
+Обязательные переменные окружения:|Required environment variables:
+Необязательные:|Optional:
+не задана|not set
+задана|set
+Отправить проверочное письмо себе|Send a test message to yourself
+Обновить состояние|Refresh the status
+Проверочное письмо отправлено:|Test message sent:
+Не отправлено|Not sent
+Проверка системной почты выполнена|The platform mail check has run
+Пока системная почта не настроена, обычный пользователь войти не может: ссылка ему не отправляется. Суперадмин входит по ссылке из журнала сервера — это временный обходной путь, а не рабочий сценарий.|Until platform mail is configured an ordinary user cannot sign in at all, because no link is sent to them. A superadmin signs in with the link from the server log, which is a temporary way round rather than a working arrangement.
 Записей пока нет.|No entries yet.
 Записей нет.|No entries.
 Целевое событие:|Target event:

@@ -7,10 +7,11 @@ import {publicAddress} from './config';
 import {accountSettings} from './accountsettings';
 import type {Ctx} from './context';
 import {detectProvider,oauthConfig,oauthReady,exchangeCode,sendMessage,verifyAccess,verifyIncomingChannel,readIncoming,type Provider,type MailApps} from './mailproviders';
-import {guessMailSettings,type MailSettings} from './autoconfig';
+import {guessMailSettings,providerFallback,type MailSettings} from './autoconfig';
 import {platformSettings,resolveMailApps,appOwner} from './platform';
 import {sealFields,openFields} from './secrets';
 import {mailboxReadiness,domainReadiness} from './readiness';
+import {withTimeout,budget,limits,PhaseTimeout} from './timeout';
 
 /** Credentials live in the auth store, never in the workspace state the UI can read. */
 const secretKey=(accountId:string,email:string)=>`mailbox:${accountId}:${email.toLowerCase()}`;
@@ -28,18 +29,24 @@ const getSecret=async(accountId:string,email:string)=>{
  return stored?openFields(stored,secretFields):null;
 };
 
-/** Waits for one specific message to come back, whichever way this mailbox receives mail. */
-async function awaitMarker(secret:any,apps:MailApps,marker:string){
+/** Waits for one specific message to come back, whichever way this mailbox receives mail.
+    Polling stops at the deadline rather than after a fixed number of tries, so a slow mailbox
+    gets the time it has and a dead one never holds the request open past the budget. */
+async function awaitMarker(secret:any,apps:MailApps,marker:string,allowedMs:number){
  const attempts=Number(process.env.VERIFY_ATTEMPTS??6);
  const delay=Number(process.env.VERIFY_DELAY_MS??2500);
- for(let attempt=0;attempt<attempts;attempt++){
+ const window=budget(allowedMs);
+ let last:any=null;
+ for(let attempt=0;attempt<attempts&&!window.expired();attempt++){
   try{
-   const messages=await readIncoming(secret,apps,30);
+   const messages=await withTimeout('incoming',window.spend(limits().phase),()=>readIncoming(secret,apps,30));
    const found=messages.find(m=>m.subject.includes(marker)||m.text.includes(marker));
    if(found)return found;
-  }catch(e:any){if(attempt===attempts-1)throw e;}
-  if(attempt<attempts-1)await new Promise(r=>setTimeout(r,delay));
+  }catch(e:any){last=e;}
+  if(window.remaining()>delay)await new Promise(r=>setTimeout(r,delay));
  }
+ // A read that never succeeded is an error about the channel, not an absent message.
+ if(last)throw last;
  return null;
 }
 
@@ -97,6 +104,41 @@ const rules:[RegExp,string][]=[
 /** A stated heuristic, not an understanding of the message. Categories stay editable by hand. */
 export const classify=(text:string)=>rules.find(([pattern])=>pattern.test(text))?.[1]??'neutral';
 
+/** What the send path needs to use a mailbox, and nothing more: the credential and the OAuth
+    applications behind it. Kept here because this is the only module that may open a secret. */
+export type SenderCredentials={secret:any;apps:MailApps;email:string};
+export async function senderCredentials(accountId:string,email:string):Promise<SenderCredentials|null>{
+ const secret=await getSecret(accountId,email);
+ if(!secret)return null;
+ return {secret,apps:await appsFor(accountId),email:email.toLowerCase()};
+}
+
+/** One real message through a connected mailbox, bounded like every other network call here.
+    The subject and text are passed in and never composed: what is sent is what was approved. */
+export async function sendThrough(credentials:SenderCredentials,to:string,subject:string,text:string){
+ return withTimeout('send',limits().phase,
+  ()=>sendMessage(credentials.secret,to,subject,text,credentials.apps));
+}
+
+/** The four proofs, in the order they are attempted, and how each is named on screen. */
+export type StepName='auth'|'testSend'|'imap'|'incoming';
+export const stepLabels:Record<StepName,string>={auth:'вход',testSend:'отправка',imap:'приём',incoming:'чтение'};
+type Check={status:'ok'|'failed';detail:string;code:string;ms:number};
+const skipped=(_name:StepName,detail:string,code:string):Check=>({status:'failed',detail,code,ms:0});
+
+/** A reason code the interface can act on, rather than only a sentence it can print. */
+const reasonOf=(e:any):string=>{
+ const text=String(e?.message??e).toLowerCase();
+ const code=String(e?.code??'');
+ if(['ETIMEDOUT','ESOCKETTIMEDOUT','ETIMEOUT'].includes(code)||text.includes('timeout'))return 'TIMEOUT';
+ if(code==='ECONNREFUSED'||text.includes('econnrefused'))return 'CONNECTION_REFUSED';
+ if(['ENOTFOUND','EAI_AGAIN'].includes(code)||text.includes('enotfound'))return 'HOST_NOT_FOUND';
+ if(code==='EAUTH'||text.includes('invalid credentials')||text.includes('authenticationfailed')
+  ||text.includes('username and password')||text.includes('535'))return 'AUTH_REJECTED';
+ if(code==='ESOCKET'||text.includes('certificate')||text.includes('tls'))return 'TLS_FAILED';
+ return 'FAILED';
+};
+
 export const mailboxOperations={
  /** Works out everything the address alone can tell us: who serves the domain, whether Sendina
      can offer a consent button, and, for every other provider, the settings to connect with.
@@ -109,12 +151,29 @@ export const mailboxOperations={
   const apps=resolveMailApps(platform,own);
   if(detection.provider!=='smtp'){
    const owner=appOwner(platform,own,detection.provider);
-   return {...detection,route:owner==='none'?'oauth-unconfigured':'oauth',appOwner:owner,
-    oauthConfigured:oauthReady(detection.provider,apps),settings:null,redirectUri:redirectUri()};
+   const configured=owner!=='none';
+   return {...detection,route:configured?'oauth':'oauth-unconfigured',appOwner:owner,
+    oauthConfigured:oauthReady(detection.provider,apps),
+    /** Consent is the first way in and stays the first way in. These are carried so that the
+        advanced route, which is the only one open until the platform application exists, opens
+        already filled in rather than as four empty boxes. */
+    settings:providerFallback(detection.provider),advancedOnly:!configured,
+    /** A missing platform application is a blocker for the platform, not a task for the person
+        holding the mailbox. Only a superadmin is told where it is fixed. */
+    blocker:configured?null:{
+     code:'PLATFORM_OAUTH_APP_MISSING',
+     message:`Приложение ${detection.provider==='google'?'Google':'Microsoft'} OAuth платформы не настроено.`,
+     forSuperadmin:`OAuth-приложение ${detection.provider==='google'?'Google':'Microsoft'} платформы не настроено.`,
+     where:{screen:'Аккаунты',section:'Приложения платформы',
+      field:detection.provider==='google'?'Google client ID и client secret':'Microsoft client ID и client secret',
+      redirectUri:redirectUri()}},
+    redirectUri:redirectUri()};
   }
   let settings:MailSettings|null=null;
-  try{settings=await guessMailSettings(detection.domain,detection.mx);}catch{settings=null;}
-  return {...detection,route:settings?'auto':'manual',appOwner:'none',
+  // Autoconfig reaches DNS and an external database, neither of which may hold the request open.
+  try{settings=await withTimeout('detect',limits().phase,signal=>guessMailSettings(detection.domain,detection.mx,signal));}
+  catch{settings=null;}
+  return {...detection,route:settings?'auto':'manual',appOwner:'none',advancedOnly:false,blocker:null,
    oauthConfigured:false,settings,redirectUri:redirectUri()};},
 
  /** Builds the provider consent URL. The mailbox stays unconnected until the callback succeeds. */
@@ -173,32 +232,57 @@ export const mailboxOperations={
   if(!secret)throw Error('Ящик не подключён. Сначала подключите его.');
   const apps=await appsFor(ctx.accountId);
   const marker=`SND-${randomBytes(5).toString('hex').toUpperCase()}`;
-  const results:Record<string,{status:'ok'|'failed';detail:string}>={};
-  const step=async(name:string,run:()=>Promise<string>)=>{
-   try{results[name]={status:'ok',detail:(await run()).slice(0,300)};return true;}
-   catch(e:any){results[name]={status:'failed',detail:String(e.message).slice(0,300)};return false;}
+  const cap=limits();
+  const whole=budget(cap.total);
+  const results:Record<string,Check>={};
+  /** Every phase is bounded twice: by its own limit and by what is left of the whole check.
+      Whatever happens, the phase records an outcome, so the caller is never left without one. */
+  const step=async(name:StepName,want:number,run:()=>Promise<string>)=>{
+   const allowed=whole.spend(want);
+   if(allowed<=0){results[name]=skipped(name,'Проверка исчерпала общее время.','BUDGET_EXHAUSTED');return false;}
+   const started=Date.now();
+   try{
+    const detail=await withTimeout(name,allowed,()=>run());
+    results[name]={status:'ok',detail:detail.slice(0,300),code:'OK',ms:Date.now()-started};
+    return true;
+   }catch(e:any){
+    results[name]={status:'failed',detail:String(e?.message??e).slice(0,300),
+     code:e instanceof PhaseTimeout?'TIMEOUT':reasonOf(e),ms:Date.now()-started};
+    return false;
+   }
   };
 
-  const authOk=await step('auth',()=>verifyAccess(secret,apps));
-  const sendOk=authOk&&await step('testSend',async()=>{
+  const authOk=await step('auth',cap.phase,()=>verifyAccess(secret,apps));
+  if(!authOk)for(const name of ['testSend','imap','incoming'] as StepName[])
+   results[name]??=skipped(name,'Пропущено: вход в ящик не прошёл.','SKIPPED');
+  const sendOk=authOk&&await step('testSend',cap.phase,async()=>{
    const sent=await sendMessage(secret,email,`Sendina — проверка ${marker}`,
     `Проверка ящика ${email}. Код ${marker}.
 
 Это письмо подтверждает отправку и приём. Адресатов кампаний оно не затрагивает.`,apps);
    return `Отправлено через ${sent.via}`;});
-  const channelOk=authOk&&await step('imap',()=>verifyIncomingChannel(secret,apps));
-  if(sendOk&&channelOk)await step('incoming',async()=>{
-   const found=await awaitMarker(secret,apps,marker);
-   if(!found)throw Error(`Тестовое письмо ${marker} не появилось во входящих. Проверьте приём почты.`);
-   return `Входящее письмо ${marker} прочитано`;});
-  else results.incoming={status:'failed',detail:'Пропущено: отправка или приём не прошли.'};
+  const channelOk=authOk&&await step('imap',cap.phase,()=>verifyIncomingChannel(secret,apps));
+  if(authOk){
+   if(sendOk&&channelOk)await step('incoming',cap.readback,async()=>{
+    const found=await awaitMarker(secret,apps,marker,whole.spend(cap.readback));
+    if(!found)throw Error(`Тестовое письмо ${marker} не появилось во входящих за отведённое время. Проверьте приём почты.`);
+    return `Входящее письмо ${marker} прочитано`;});
+   else results.incoming=skipped('incoming','Пропущено: отправка или приём не прошли.','SKIPPED');
+  }
 
+  // The order the phases are attempted in is the order the interface reports them.
+  const order:StepName[]=['auth','testSend','imap','incoming'];
+  const failed=order.find(name=>results[name]?.status!=='ok')??null;
   return change(ctx.accountId,s=>{const {domain,mailbox}=findMailbox(s,email);
    const at=new Date().toISOString();
    for(const [name,value] of Object.entries(results))mailbox[name]={...value,at};
    const box=mailboxReadiness(domain,mailbox,s.stopped);
-   audit(s,`Проверка ящика ${email}: ${Object.entries(results).map(([k,v])=>`${k} ${v.status}`).join(', ')}.`);
+   audit(s,`Проверка ящика ${email}: ${order.map(k=>`${stepLabels[k]} ${results[k]?.status==='ok'?'ok':results[k]?.code??'failed'}`).join(', ')}.`);
    return {email,checks:results,readiness:box,ready:box.ready,
+    /** A finished check, always: which step stopped it, in the wording the screen shows. */
+    outcome:failed?'failed':'ok',failedStep:failed,
+    failedStepLabel:failed?stepLabels[failed]:'',
+    reason:failed?results[failed].code:'OK',
     domainReadiness:domainReadiness(domain,s.stopped)};});},
 
  /** Kept as a single re-run of the send step for an already verified mailbox. */
@@ -207,20 +291,27 @@ export const mailboxOperations={
   const secret=await getSecret(ctx.accountId,email);
   if(!secret)throw Error('Ящик не подключён. Сначала подключите его через OAuth или SMTP.');
   const target=(to??email).toLowerCase();
-  let result:{status:'ok'|'failed';detail:string};
-  try{const sent=await sendMessage(secret,target,'Sendina — тестовая отправка',
+  const cap=limits();
+  let result:{status:'ok'|'failed';detail:string;code:string};
+  const started=Date.now();
+  try{const apps=await appsFor(ctx.accountId);
+   const sent=await withTimeout('testSend',cap.phase,()=>sendMessage(secret,target,'Sendina — тестовая отправка',
     `Это тестовое письмо Sendina.
 
 Оно подтверждает, что ящик ${email} действительно может отправлять почту.
-Никаких адресатов кампании оно не затрагивает.`,
-    await appsFor(ctx.accountId));
-   result={status:'ok',detail:`Доставлено через ${sent.via}`};}
-  catch(e:any){result={status:'failed',detail:String(e.message).slice(0,300)};}
+Никаких адресатов кампании оно не затрагивает.`,apps));
+   result={status:'ok',detail:`Доставлено через ${sent.via}`,code:'OK'};}
+  catch(e:any){result={status:'failed',detail:String(e?.message??e).slice(0,300),
+   code:e instanceof PhaseTimeout?'TIMEOUT':reasonOf(e)};}
+  const spent=Date.now()-started;
   return change(ctx.accountId,s=>{const {domain,mailbox}=findMailbox(s,email);
-   mailbox.testSend={status:result.status,at:new Date().toISOString(),detail:result.detail};
+   mailbox.testSend={status:result.status,at:new Date().toISOString(),detail:result.detail,code:result.code,ms:spent};
    const box=mailboxReadiness(domain,mailbox,s.stopped);
    audit(s,`Тестовая отправка ${email}: ${result.status==='ok'?'успешно':'ошибка'}. ${result.detail}`);
    return {email,testSend:mailbox.testSend,readiness:box,ready:box.ready,
+    outcome:result.status==='ok'?'ok':'failed',reason:result.code,
+    failedStep:result.status==='ok'?null:'testSend',
+    failedStepLabel:result.status==='ok'?'':stepLabels.testSend,
     domainReadiness:domainReadiness(domain,s.stopped)};});},
 
  disconnect:async(ctx:Ctx,input:unknown)=>{const {email}=mailboxSchemas.email.parse(input);

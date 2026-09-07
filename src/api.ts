@@ -45,13 +45,41 @@ export function captureSession():''|'signed-in'|'expired'{
  return '';
 }
 
+/** No call waits forever.
+
+    `fetch` has no timeout of its own: a request to a server that accepted the connection and then
+    stopped answering stays pending until the browser gives up, which can be minutes. Every screen
+    here is just awaiting that promise, so a stalled request is a spinner that never resolves — and
+    the person is left unable to tell a slow check from a broken one. A deadline turns that into an
+    ordinary error the interface can show.
+
+    Checking a mailbox legitimately takes longer than anything else, because it waits for a real
+    message to travel and come back. Its limit therefore sits above the server's own budget for
+    the same work, so the server's result — which names the step that failed — is what arrives,
+    and this is only the backstop for when even that does not come. */
+const slowPaths=['/mailboxes/connect','/mailboxes/verify','/mailboxes/test','/mailboxes/sync','/platform/mail/test'];
+const deadlineFor=(path:string)=>slowPaths.some(p=>path.startsWith(p))?150000:45000;
+
 export async function api(path:string,body?:unknown){
  if(await resolveMode()==='demo')return demoApi(path,body);
  const base=backendUrl();
  const token=session();
- const r=await fetch(base+'/api'+path,{method:body===undefined?'GET':'POST',
-  headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})},
-  body:body===undefined?undefined:JSON.stringify(body)});
+ const ms=deadlineFor(path);
+ const controller=new AbortController();
+ const timer=setTimeout(()=>controller.abort(),ms);
+ let r:Response;
+ try{
+  r=await fetch(base+'/api'+path,{method:body===undefined?'GET':'POST',signal:controller.signal,
+   headers:{'Content-Type':'application/json',...(token?{Authorization:`Bearer ${token}`}:{})},
+   body:body===undefined?undefined:JSON.stringify(body)});
+ }catch(e:any){
+  // An aborted request may still have been carried out by the server, so the caller is told which
+  // of the two happened rather than being left to assume the action did not take place.
+  if(e?.name==='AbortError')throw Object.assign(
+   Error(`Сервер не ответил за ${Math.round(ms/1000)} с. Запрос прерван — операция могла быть выполнена, обновите состояние и проверьте.`),
+   {status:0,timeout:true});
+  throw Object.assign(Error('Сервер недоступен. Проверьте адрес подключения.'),{status:0});
+ }finally{clearTimeout(timer);}
  if(!r.headers.get('content-type')?.includes('application/json'))throw Error('Сервер недоступен. Проверьте адрес подключения.');
  const data=await r.json();
  if(!r.ok){const error=Object.assign(Error(data.error??'Ошибка запроса'),{status:r.status});throw error;}

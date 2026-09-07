@@ -18,7 +18,7 @@ export function mountMcp(app:Express){
  const jwks=process.env.OAUTH_JWKS_URL?createRemoteJWKSet(new URL(process.env.OAUTH_JWKS_URL)):null;
  const authorizationServers=()=>oauthEnabled()?[publicUrl()]:issuer?[issuer]:[];
  const method=()=>oauthEnabled()?'OAuth 2.1':issuer&&jwks?'OAuth 2.1 (внешний провайдер)':process.env.MCP_TOKEN?'Токен разработчика':'Не настроено';
- const tools=['get_capabilities','get_dashboard','list_campaigns','get_campaign','create_campaign','find_recipients','import_contacts','confirm_recipient','prepare_messages','launch_preview','set_control_mode','approve_first_batch','set_campaign_status','record_reply','exclude_recipient','emergency_stop','list_mailboxes','verify_mailbox','sync_replies','test_mailbox','research_opportunities','list_opportunities','research_markets_by_country','research_markets_by_niche','assess_market','list_markets','save_favourite','remove_favourite','create_test_from_research','list_threads','get_thread','set_thread_action','get_analytics','list_locations'];
+ const tools=['get_capabilities','get_dashboard','list_campaigns','get_campaign','create_campaign','find_recipients','import_contacts','confirm_recipient','prepare_messages','launch_preview','set_control_mode','approve_first_batch','set_campaign_status','record_reply','exclude_recipient','emergency_stop','list_mailboxes','verify_mailbox','sync_replies','test_mailbox','research_opportunities','list_opportunities','research_markets_by_country','research_markets_by_niche','assess_market','list_markets','save_favourite','remove_favourite','create_test_from_research','list_threads','get_thread','set_thread_action','get_analytics','list_locations','propose_recipients','save_opportunities','save_market_results','get_sender_status','send_campaign','set_domain_limit'];
 
  app.get(['/.well-known/oauth-protected-resource','/.well-known/oauth-protected-resource/mcp'],(_req,res)=>
   res.json({resource:resourceUrl(),authorization_servers:authorizationServers(),scopes_supported:['sendina:read','sendina:write'],bearer_methods_supported:['header'],resource_name:'Sendina'}));
@@ -150,6 +150,50 @@ export function mountMcp(app:Express){
    {period:z.enum(['today','yesterday','7d','30d','90d','all','custom']).optional(),
     from:z.string().optional(),to:z.string().optional(),campaign:z.string().optional()},
    false,true,a=>operations.analytics(account,a));
+
+  // Research done in the chat, stored by Sendina. These exist because the intelligence may live
+  // on the other side of the connector: none of them needs a model configured in the workspace,
+  // and none of them relaxes the evidence a recipient needs before anything may be sent to them.
+  register('propose_recipients','Store recipients you researched yourself, as proposals. Needs no model configured in Sendina. Every candidate is stored unverified and cannot be sent to until confirm_recipient supplies a real source and evidence.',
+   {id:z.string(),candidates:z.array(z.object({
+     name:z.string().min(1).max(120),company:z.string().min(1).max(160),role:z.string().max(160).optional(),
+     country:z.string().max(80).optional(),email:z.email().nullable().optional(),
+     source:z.url().max(500).nullable().optional(),
+     evidence:z.string().min(10).max(600),basis:z.string().min(3).max(300),reason:z.string().min(10).max(600),
+     confidence:z.number().min(0).max(100).optional()})).min(1).max(200)},
+   true,false,a=>operations.proposeRecipients(account,a));
+
+  const researchItem={
+   name:z.string().min(3).max(160),market:z.string().min(2).max(160),niche:z.string().min(2).max(160),
+   summary:z.string().min(20).max(600),audience:z.string().min(5).max(300),
+   whyNow:z.string().min(10).max(500),whyHere:z.string().min(10).max(500),ticket:z.string().min(1).max(120),
+   pain:z.string().min(10).max(400),payingPower:z.string().min(5).max(300),reach:z.string().min(5).max(300),
+   why:z.string().min(10).max(500),
+   factors:z.object({pain:z.number().min(0).max(10),urgency:z.number().min(0).max(10),
+    willingnessToPay:z.number().min(0).max(10),buyerReach:z.number().min(0).max(10),
+    aiAdvantage:z.number().min(0).max(10),marketSize:z.number().min(0).max(10),
+    implementation:z.number().min(0).max(10),salesDifficulty:z.number().min(0).max(10),
+    competition:z.number().min(0).max(10),legalRisk:z.number().min(0).max(10)})};
+  const sources=z.array(z.object({title:z.string().max(200),url:z.url().max(500)})).max(6).optional();
+
+  register('save_opportunities','Store opportunities you researched yourself. They become the current results of the Opportunities screen, with ids save_favourite and create_test_from_research accept. Sendina computes the score from the factors.',
+   {items:z.array(z.object(researchItem)).min(1).max(20),sources,replace:z.boolean().optional()},
+   true,false,a=>operations.saveResearch(account,{...a,kind:'opportunity'}));
+  register('save_market_results','Store market research you carried out yourself. They become the current results of the Markets screen, with ids save_favourite and create_test_from_research accept.',
+   {items:z.array(z.object(researchItem)).min(1).max(20),sources,replace:z.boolean().optional()},
+   true,false,a=>operations.saveResearch(account,{...a,kind:'market'}));
+
+  register('get_sender_status','Everything that decides whether a real message may leave: connected mailboxes, which sender would be used, readiness, sendingEnabled, blockers and the last result of each of the four mailbox checks.',
+   {},false,true,()=>operations.senderStatus(account));
+
+  // Sending, which is the only tool here that does something a recipient can see. It re-applies
+  // the policy engine, the readiness rules and the emergency stop to every individual message at
+  // the moment that message leaves, so nothing about calling it from a chat weakens any of them.
+  register('send_campaign','Send the prepared letters of a campaign for real. Only existing prepared drafts are sent, never newly composed text. Every rule — emergency stop, campaign status, exclusions, replies, duplicates, legal basis, contact reason, verified source, approval mode, domain readiness and the daily domain quota — is re-checked per message at the moment it leaves. Use dryRun first: it answers with the same decisions and sends nothing.',
+   {id:z.string(),limit:z.number().int().min(1).max(200).optional(),dryRun:z.boolean().optional()},
+   true,false,a=>operations.send(account,a));
+  register('set_domain_limit','Set how many messages a day a domain may send. It starts at zero, which blocks sending, and only an operator raises it.',
+   {id:z.string(),limit:z.number().int().min(0).max(2000)},true,true,a=>operations.setDomainLimit(account,a));
 
   const transport=new StreamableHTTPServerTransport({sessionIdGenerator:undefined,enableJsonResponse:true});
   res.on('close',()=>{void transport.close();void server.close();});

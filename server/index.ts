@@ -15,6 +15,7 @@ import {supportView,supportLog} from './support';
 import {accountForSession,listAccounts,decideAccount,connectorCode,type Account} from './accounts';
 import {accountSettings,saveAccountSettings,maskSettings} from './accountsettings';
 import {platformSettings,savePlatformSettings,maskPlatform} from './platform';
+import {systemMailStatus,testSystemMail} from './systemmail';
 import type {Ctx} from './context';
 
 const app=express();app.use(express.json({limit:'1mb'}));
@@ -60,6 +61,7 @@ app.post('/api/campaigns/:id/preview',route((c,i)=>operations.prepareMessages(c,
 app.post('/api/campaigns/:id/launch-preview',route((c,i)=>operations.launchPreview(c,i)));
 app.post('/api/campaigns/:id/control',route((c,i)=>operations.setControlMode(c,i)));
 app.post('/api/campaigns/:id/approve',route((c,i)=>operations.approveFirstBatch(c,i)));
+app.post('/api/campaigns/:id/propose',route((c,i)=>operations.proposeRecipients(c,i)));
 app.post('/api/contacts/confirm',route((c,i)=>operations.confirmRecipient(c,i)));
 app.post('/api/stop',route((c,i)=>operations.emergencyStop(c,i)));
 app.post('/api/domains',route((c,i)=>operations.addMailbox(c,i)));
@@ -72,6 +74,7 @@ app.get('/api/opportunities',route(ctx=>operations.listOpportunities(ctx)));
 app.post('/api/opportunities/research',route((c,i)=>operations.researchOpportunities(c,i)));
 app.get('/api/markets',route(ctx=>operations.listMarkets(ctx)));
 app.post('/api/markets/research',route((c,i)=>operations.researchMarkets(c,i)));
+app.post('/api/research/save',route((c,i)=>operations.saveResearch(c,i)));
 app.post('/api/favourites',route((c,i)=>operations.saveFavourite(c,i)));
 app.post('/api/favourites/remove',route((c,i)=>operations.removeFavourite(c,i)));
 app.post('/api/research/campaign',route((c,i)=>operations.createTestFromResearch(c,i),201));
@@ -80,6 +83,7 @@ app.post('/api/threads/action',route((c,i)=>operations.setThreadAction(c,i)));
 app.post('/api/analytics',route((c,i)=>operations.analytics(c,i)));
 app.post('/api/demo',route((c,i)=>operations.setDemo(c,i)));
 app.get('/api/mailboxes/status',route(ctx=>mailboxOperations.status(ctx)));
+app.get('/api/sender',route(ctx=>operations.senderStatus(ctx)));
 app.post('/api/mailboxes/detect',route((c,i)=>mailboxOperations.detect(c,i)));
 app.post('/api/mailboxes/oauth',route((c,i)=>mailboxOperations.startOauth(c,i)));
 app.post('/api/mailboxes/connect',route((c,i)=>mailboxOperations.connectMailbox(c,i)));
@@ -99,6 +103,12 @@ const superadminOnly=(req:express.Request,res:express.Response,next:express.Next
  req.account?.role==='superadmin'?next():res.status(403).json({error:'Доступ только для суперадминов'});
 app.get('/api/platform',superadminOnly,async(_req,res)=>res.json(maskPlatform(await platformSettings())));
 app.post('/api/platform',superadminOnly,async(req,res)=>res.json(await savePlatformSettings(req.body)));
+/** Platform mail is infrastructure, so its state is a superadmin's business and nobody else's. */
+app.get('/api/platform/mail',superadminOnly,(_req,res)=>res.json(systemMailStatus()));
+app.post('/api/platform/mail/test',superadminOnly,async(req,res)=>{
+ const to=z.object({to:z.email().optional()}).parse(req.body??{}).to??req.account!.email;
+ res.json(await testSystemMail(to));
+});
 app.get('/api/accounts',superadminOnly,async(_req,res)=>res.json(await listAccounts()));
 app.post('/api/accounts/decide',superadminOnly,async(req,res)=>res.json(await decideAccount(req.account!,req.body)));
 /** Support view. A superadmin may look at an account's workspace and may not change it: this is
@@ -109,7 +119,12 @@ app.get('/api/accounts/:id/workspace',superadminOnly,async(req,res)=>
  res.json(await supportView(req.account!,String(req.params.id))));
 app.get('/api/support-log',superadminOnly,async(_req,res)=>res.json(await supportLog()));
 
-app.post('/api/send',(_req,res)=>res.status(409).json({error:'Отправка не подключена. Требуются проверенный почтовый провайдер, версионированные правила юрисдикций и подтверждение первой партии.'}));
+/** Real sending. Every rule is re-applied per message inside send.ts, at the moment it leaves. */
+app.post('/api/campaigns/:id/send',route((c,i)=>operations.send(c,i)));
+app.post('/api/domains/:id/limit',route((c,i)=>operations.setDomainLimit(c,i)));
+/** The old workspace-wide endpoint never named a campaign, so it cannot mean anything now that
+    sending is real. It says where to go rather than pretending to have sent something. */
+app.post('/api/send',(_req,res)=>res.status(409).json({error:'Отправка выполняется по кампании: POST /api/campaigns/:id/send. Требуются проверенный ящик, суточный лимит домена и подтверждение первой партии.'}));
 mountMailboxCallback(app);
 mountOauth(app);
 mountMcp(app);

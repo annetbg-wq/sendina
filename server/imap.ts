@@ -1,12 +1,18 @@
 import {ImapFlow} from 'imapflow';
+import {limits} from './timeout';
 
 /** Incoming mail. Nothing about a mailbox counts as working until a real message is read back. */
 export type ImapAccess={host:string;port:number;secure:boolean;user:string;pass:string};
 export type Incoming={uid:number;from:string;subject:string;text:string;messageId:string;inReplyTo:string;references:string[];at:string};
 
+/** A wrong IMAP host usually accepts the connection and then never sends a greeting, so the
+    client needs its own limits: without them the read waits on the operating system and the
+    request that is waiting for it never returns. */
 const connect=async(access:ImapAccess)=>{
+ const {phase}=limits();
  const client=new ImapFlow({host:access.host,port:access.port,secure:access.secure,
   auth:{user:access.user,pass:access.pass},logger:false,
+  connectionTimeout:phase,greetingTimeout:phase,socketTimeout:phase,
   tls:{rejectUnauthorized:process.env.IMAP_ALLOW_SELF_SIGNED!=='1'}});
  await client.connect();
  return client;

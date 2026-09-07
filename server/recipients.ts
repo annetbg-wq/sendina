@@ -155,7 +155,11 @@ export const resolveMode=(setting:string,searchAvailable:boolean,organisationsAv
  :organisationsAvailable?'organisations':searchAvailable?'search':'proposal';
 
 export async function findRecipients(campaign:any,setting:string,count:number,config:ResearchConfig,signal?:AbortSignal):Promise<FindResult>{
- if(!aiReady(config))throw Error('Модель не подключена. Обратитесь к администратору Sendina.');
+ // This path researches, so it needs a model. A caller that has already done the research does
+ // not: `propose_recipients` stores candidates with their source and evidence and asks for none.
+ if(!aiReady(config))throw Error('Модель не подключена: этот поиск выполняет сама Sendina. '
+  +'Если исследование уже проведено на вашей стороне, сохраните кандидатов через propose_recipients — модель для этого не нужна. '
+  +'Иначе обратитесь к администратору Sendina.');
  const mode=resolveMode(setting,searchReady(config),placesReady(config));
  if(mode==='search'&&!searchReady(config))throw Error('Выбран поиск в интернете, но он не подключён.');
  if(mode==='organisations'&&!placesReady(config))throw Error('Выбран поиск организаций, но он не подключён.');
