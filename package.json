@@ -11,7 +11,8 @@
     "test": "tsx --test --test-concurrency=3 tests/*.test.ts",
     "test:e2e": "playwright test",
     "test:e2e:gate": "playwright test --config=gate.config.ts",
-    "test:e2e:product": "playwright test --config=product.config.ts"
+    "test:e2e:product": "playwright test --config=product.config.ts",
+    "probe:mail-network": "node scripts/mail-network-probe.mjs"
   },
   "repository": {
     "type": "git",
@@ -43,7 +44,6 @@
     "@types/express": "^5.0.6",
     "@types/node": "^26.4.1",
     "@types/nodemailer": "^8.0.1",
-    "@types/pg": "^8.23.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
