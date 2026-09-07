@@ -78,7 +78,7 @@ export async function demoApi(path:string,body?:any){
   const email=z.email().parse(body.email).toLowerCase();
   result={email,domain:email.split('@')[1],provider:'smtp',workspace:true,personal:false,mx:[],
    note:'Демонстрация в браузере: определить провайдера по MX нельзя. Подключите сервер, чтобы Sendina сделала это сама.',
-   route:'manual',appOwner:'none',oauthConfigured:false,settings:null,redirectUri:''};
+   route:'manual',appOwner:'none',advancedOnly:false,blocker:null,oauthConfigured:false,settings:null,redirectUri:''};
  }
  else if(path.startsWith('/mailboxes/'))throw needsServer('Подключение ящика выполняется на сервере.');
  else if(path==='/settings/recipients'){const mode=z.enum(['auto','organisations','search','proposal']).parse(body.mode);s.settings={...s.settings,recipientMode:mode};result={mode,effective:'proposal'};log(`Режим поиска адресатов: ${mode}`);}

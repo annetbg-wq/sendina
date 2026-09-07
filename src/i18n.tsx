@@ -664,6 +664,48 @@ PostgreSQL подключён: данные переживают передеп�
 Рабочий e-mail|Work e-mail
 Расширенная настройка|Advanced setup
 Расширенная настройка. Эти параметры есть в панели вашего почтового провайдера.|Advanced setup. These values are in your mail provider control panel.
+Изменить вручную|Edit by hand
+Настройки определены автоматически|Settings detected automatically
+Расширенный способ подключения (SMTP и IMAP по паролю приложения)|Advanced connection method (SMTP and IMAP with an app password)
+Подключение через Google пока недоступно.|Connecting through Google is not available yet.
+Подключение через Microsoft пока недоступно.|Connecting through Microsoft is not available yet.
+Приложение платформы ещё не настроено администратором Sendina. Пока этого не произошло, ящик можно подключить расширенным способом — по паролю приложения.|The platform application has not been set up by a Sendina administrator yet. Until it is, the mailbox can be connected the advanced way, with an app password.
+OAuth-приложение Google платформы не настроено.|The platform Google OAuth application is not configured.
+OAuth-приложение Microsoft платформы не настроено.|The platform Microsoft OAuth application is not configured.
+Настроить приложение платформы|Set up the platform application
+Адрес возврата для приложения:|Redirect URI for the application:
+Проверка ящика|Mailbox check
+Скрыть результат|Hide the result
+Остановилась:|Stopped at:
+Причина:|Reason:
+Сервер прервал шаг по таймауту — узел принял соединение, но не ответил. Проверьте host, порт и шифрование.|The server cut the step off at its deadline: the host accepted the connection and then did not answer. Check the host, the port and the encryption.
+Провайдер отклонил пароль. Для Gmail и Microsoft 365 нужен пароль приложения, а не обычный пароль аккаунта.|The provider rejected the password. Gmail and Microsoft 365 need an app password, not the ordinary account password.
+Узел не найден в DNS — проверьте имя сервера.|The host was not found in DNS: check the server name.
+Чтение письма|Reading the message
+Отправка|Sending
+Приём|Receiving
+Поиск организаций|Organisation search
+Первый слой подбора адресатов: реальные организации из справочника, до того как что-либо ищет человека или адрес. Провайдер — Google Places. Это платформенная настройка: ключ задаётся один раз для всех аккаунтов, отдельных полей у аккаунта здесь нет.|The first layer of recipient research: real organisations from a directory, before anything looks for a person or an address. The provider is Google Places. This is a platform setting: the key is entered once for every account, and there are no per-account fields here.
+К Google Workspace отношения не имеет: это разные приложения и разные ключи. Google Workspace — подключение почтового ящика, Google Places — справочник организаций.|It has nothing to do with Google Workspace: these are different applications and different keys. Google Workspace connects a mailbox; Google Places is a directory of organisations.
+Настроить на экране «Аккаунты»|Set up on the Accounts screen
+Настраивает администратор Sendina.|Set up by a Sendina administrator.
+Провайдер:|Provider:
+Google Places API key|Google Places API key
+Справочник реальных организаций для подбора адресатов. Это|A directory of real organisations for recipient research. This is
+не Google Workspace: отдельное приложение и отдельный ключ. Нужен Places API (New), включённый в проекте Google Cloud. Ключ хранится зашифрованным и обратно в интерфейс не возвращается.|not Google Workspace: a separate application and a separate key. It needs the Places API (New) enabled in a Google Cloud project. The key is stored encrypted and is never returned to the interface.
+Системная почта|Platform mail
+Настроена|Configured
+Не настроена|Not configured
+Обязательные переменные окружения:|Required environment variables:
+Необязательные:|Optional:
+не задана|not set
+задана|set
+Отправить проверочное письмо себе|Send a test message to yourself
+Обновить состояние|Refresh the status
+Проверочное письмо отправлено:|Test message sent:
+Не отправлено|Not sent
+Проверка системной почты выполнена|The platform mail check has run
+Пока системная почта не настроена, обычный пользователь войти не может: ссылка ему не отправляется. Суперадмин входит по ссылке из журнала сервера — это временный обходной путь, а не рабочий сценарий.|Until platform mail is configured an ordinary user cannot sign in at all, because no link is sent to them. A superadmin signs in with the link from the server log, which is a temporary way round rather than a working arrangement.
 Записей пока нет.|No entries yet.
 Записей нет.|No entries.
 Целевое событие:|Target event:

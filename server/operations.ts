@@ -12,8 +12,9 @@ import {aiReady,aiModel,complete} from './ai';
 import {searchReady,searchProvider} from './search';
 import {noDns,box,anywhere,demoSeed,seed as seedState,type State,type Research} from './seed';
 import {domainReadiness,mailboxReadiness} from './readiness';
+import {stepLabels,type StepName} from './mailboxes';
 import {countries,regions,locationLabel,normalizeLocation} from './geo';
-import {researchOpportunities,researchMarkets,campaignDraft,RESULTS} from './research';
+import {researchOpportunities,researchMarkets,campaignDraft,researchFromInput,importedItemSchema,RESULTS} from './research';
 import {threads as buildThreads,outcomes} from './threads';
 import {analytics as buildAnalytics} from './analytics';
 
@@ -33,10 +34,15 @@ const findResearch=(s:State,id:string):Research=>{
  return item;
 };
 
-/** Addresses of this campaign that also sit in another campaign of the workspace. */
+/** Addresses of this campaign that also sit in another campaign of the workspace.
+
+    A proposed recipient has no address yet, and two of those are not the same person written
+    twice — they are two organisations nobody has found an address for. Counting them as repeats
+    blocked every proposal with DUPLICATE_RECIPIENT, which hid the real reason it could not be
+    sent to: that its source is not verified. An absent address is not an address. */
 export function duplicateEmails(s:State,campaignId:string){
- const mine=s.contacts.filter(c=>c.campaignId===campaignId);
- const elsewhere=new Set(s.contacts.filter(c=>c.campaignId!==campaignId).map(c=>c.email));
+ const mine=s.contacts.filter(c=>c.campaignId===campaignId&&c.email);
+ const elsewhere=new Set(s.contacts.filter(c=>c.campaignId!==campaignId&&c.email).map(c=>c.email));
  const seen=new Set<string>(),repeated=new Set<string>();
  for(const c of mine){if(seen.has(c.email))repeated.add(c.email);seen.add(c.email);}
  return [...new Set([...mine.filter(c=>elsewhere.has(c.email)).map(c=>c.email),...repeated])];
@@ -97,7 +103,21 @@ export const schemas={
   outcome:z.enum(['meeting','documents','interest','later','refused','unsubscribed','bounced','none','other']).optional()}),
  analytics:z.object({period:z.string().max(20).default('30d'),from:z.string().max(40).optional(),
   to:z.string().max(40).optional(),campaign:z.string().max(80).default('all')}),
- demo:z.object({enabled:z.boolean()})
+ demo:z.object({enabled:z.boolean()}),
+ /** A candidate somebody else researched. Same fields the internal search has to produce, so
+     nothing reaches the store through a looser door than the model's own answers do. */
+ proposeRecipients:z.object({id:z.string().min(1),
+  candidates:z.array(z.object({
+   name:z.string().min(1).max(120),company:z.string().min(1).max(160),role:z.string().max(160).default(''),
+   country:z.string().max(80).default(''),
+   email:z.email().nullable().optional(),
+   source:z.url().max(500).nullable().optional(),
+   evidence:z.string().min(10).max(600),basis:z.string().min(3).max(300),reason:z.string().min(10).max(600),
+   confidence:z.number().min(0).max(100).default(50)})).min(1).max(200)}),
+ saveResearch:z.object({kind:z.enum(['opportunity','market']),
+  items:z.array(importedItemSchema).min(1).max(20),
+  sources:z.array(z.object({title:z.string().max(200),url:z.url().max(500)})).max(6).default([]),
+  replace:z.boolean().default(true)})
 };
 
 export const operations={
@@ -117,6 +137,37 @@ export const operations={
   connections:maskSettings(own),
   storage:{postgres:Boolean(pool),durable:Boolean(pool)},
   sendingEnabled:false};},
+
+ /** Everything that decides whether a real message may leave, in one answer.
+
+     Before a controlled live send somebody has to know which mailboxes exist, which one would be
+     used, whether it is actually ready, and what is still in the way. That was spread across the
+     mailbox status, the readiness rules and the capabilities call, so a connector had to assemble
+     it and could assemble it wrongly. This reads the same rows those do and adds nothing. */
+ senderStatus:async(ctx:Ctx)=>{const st=await read(ctx.accountId);
+  const steps:StepName[]=['auth','testSend','imap','incoming'];
+  const mailboxes=st.domains.flatMap((d:any)=>d.mailboxes.map((m:any)=>({
+   email:m.email,domain:d.name,provider:m.provider,connection:m.connection,connectedAt:m.connectedAt??null,
+   transport:m.transport?{smtp:m.transport.smtp,imap:m.transport.imap,label:m.transport.label}:null,
+   readiness:mailboxReadiness(d,m,st.stopped),
+   /** The last outcome of each of the four proofs, named as the screen names them. */
+   checks:Object.fromEntries(steps.map(name=>[name,{
+    step:stepLabels[name],status:m[name]?.status??'none',at:m[name]?.at??null,
+    detail:m[name]?.detail??'',code:m[name]?.code??''}]))})));
+  const sender=mailboxes.find((m:any)=>m.readiness.ready)??null;
+  const domains=st.domains.map((d:any)=>({id:d.id,name:d.name,dns:d.dns,limit:d.limit,used:d.used,
+   readiness:domainReadiness(d,st.stopped)}));
+  return {
+   stopped:st.stopped,
+   /** Sending is not built yet, and this says so rather than letting a caller infer readiness. */
+   sendingEnabled:false,
+   sender:sender?{email:sender.email,domain:sender.domain,provider:sender.provider}:null,
+   ready:Boolean(sender)&&!st.stopped,
+   blockers:[...(st.stopped?['EMERGENCY_STOP']:[]),
+    ...(mailboxes.length?[]:['NO_MAILBOX']),
+    ...(sender?[]:mailboxes.flatMap((m:any)=>m.readiness.blockers))]
+    .filter((b,i,all)=>all.indexOf(b)===i),
+   mailboxes,domains};},
 
  dashboard:async(ctx:Ctx)=>{const s=await read(ctx.accountId);return {demo:s.demo,stopped:s.stopped,campaigns:s.campaigns.length,
   contacts:s.contacts.length,messages:s.messages.length,replies:s.replies.length,
@@ -214,6 +265,34 @@ export const operations={
    if(s.contacts.some(c=>c.campaignId===p.campaignId&&c.email===email&&c.id!==p.id))throw Error('Такой адрес уже есть в кампании');
    Object.assign(p,{email,source:body.source,evidence:body.evidence,verification:'verified'});
    audit(s,`Адресат подтверждён: ${email}`);return p;});},
+
+ /** Candidates researched outside Sendina, stored as proposals.
+
+     A superadmin driving Sendina from a chat has the intelligence, the browsing and the reading
+     on the other side of the connector; what was missing was a way to put a result in without
+     Sendina first doing the same work again with a model of its own. So this path does not ask
+     for `aiReady`: it does no research, it records research.
+
+     What it does not do is trust the sender. Everything arrives as a proposal, unverified, which
+     is the same state the internal proposal mode produces and which the policy engine refuses to
+     send to. An address becomes sendable only through `confirmRecipient`, against a real source
+     and evidence — the identical door, and the only door. An invented address is therefore still
+     mechanically unable to reach anybody. */
+ proposeRecipients:(ctx:Ctx,input:unknown)=>{const {id,candidates}=schemas.proposeRecipients.parse(input);
+  return change(ctx.accountId,s=>{const campaign=campaignOf(s,id);let added=0,skipped=0;
+   for(const c of candidates){
+    const email=c.email?.toLowerCase()??'';
+    if(email&&s.contacts.some(x=>x.campaignId===id&&x.email===email)){skipped++;continue;}
+    if(!email&&s.contacts.some(x=>x.campaignId===id&&!x.email&&x.company===c.company&&x.role===c.role)){skipped++;continue;}
+    s.contacts.push({id:randomUUID(),campaignId:id,email,name:c.name,company:c.company,role:c.role,
+     country:c.country,source:c.source??'',basis:c.basis,reason:c.reason,evidence:c.evidence,
+     confidence:c.confidence,
+     // Never 'verified' on the sender's word. Confirmation is a separate, evidenced step.
+     verification:'unverified',origin:'proposal'});added++;}
+   audit(s,`Предложены адресаты для «${campaign.name}» через коннектор: ${added}, повторов пропущено ${skipped}. Все не подтверждены и к отправке не допускаются.`);
+   return {added,skipped,verified:0,
+    proposed:s.contacts.filter(c=>c.campaignId===id&&c.verification==='unverified').length,
+    note:'Кандидаты сохранены как предложения. Каждый адрес нужно подтвердить через confirm_recipient с реальной ссылкой и цитатой, иначе правила не допустят отправку.'};});},
 
  /** Prepares drafts and a policy decision per recipient. Repeating it never duplicates a draft. */
  prepareMessages:(ctx:Ctx,input:unknown)=>{const {id,limit,asIfRunning}=schemas.prepare.parse(input);
@@ -328,6 +407,26 @@ export const operations={
    audit(s,`Исследование рынка (${body.mode==='country'?'по стране':body.mode==='niche'?'по нише':'ручная оценка'}): найдено ${found.items.length}.`);
    return {results:found.items,at:found.at,input:request,notes:found.notes,grounded:found.grounded,
     favourites:s.favourites.filter(f=>f.kind==='market')};});},
+
+ /** Research carried out elsewhere, landing in the rows the screens already read.
+
+     The Opportunities and Markets screens read one place: the current result of that search and
+     the favourites. A connector that had no way to write there could only leave its findings in
+     a campaign's free-text context, which is why a chat could do the research and the screen
+     still showed nothing. This writes the same rows the internal search writes, so a card saved
+     from a chat is a card the screen shows, keeps, and can build a test campaign from — by the
+     same id. The score is still computed here from the factors, never accepted as a number. */
+ saveResearch:(ctx:Ctx,input:unknown)=>{const body=schemas.saveResearch.parse(input);
+  const at=new Date().toISOString();
+  const items=body.items.map(raw=>researchFromInput(body.kind,raw,body.sources,at));
+  const field=body.kind==='opportunity'?'opportunities':'markets';
+  return change(ctx.accountId,s=>{
+   const previous=body.replace?[]:(s.research[field]?.items??[]);
+   const merged=[...items,...previous].slice(0,RESULTS*2);
+   s.research[field]={at,input:s.research[field]?.input??{imported:true},items:merged};
+   audit(s,`Сохранено из коннектора (${body.kind==='opportunity'?'возможности':'рынки'}): ${items.length}.`);
+   return {saved:items.length,results:merged,at,
+    favourites:s.favourites.filter(f=>f.kind===body.kind)};});},
 
  /** Anything a search returned may be kept. Nothing is kept automatically. */
  saveFavourite:(ctx:Ctx,input:unknown)=>{const {id}=schemas.favourite.parse(input);

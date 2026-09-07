@@ -27,7 +27,11 @@ Object.assign(process.env,{
  SUPERADMINS:'boss@example.com',
  SYSTEM_SMTP_HOST:'127.0.0.1',SYSTEM_SMTP_PORT:String(smtpPort),
  SYSTEM_SMTP_USER:'platform@example.com',SYSTEM_SMTP_PASS:'stub',SYSTEM_MAIL_FROM:'platform@example.com',
- SEARCH_BASE_URL:`http://127.0.0.1:${stubPort}/search`
+ SEARCH_BASE_URL:`http://127.0.0.1:${stubPort}/search`,
+ // Short deadlines so a browser test that deliberately connects to a dead host finishes quickly.
+ // What is being tested is that the check ends at all, not how long it is willing to wait.
+ MAIL_PHASE_TIMEOUT_MS:'2000',MAIL_READBACK_TIMEOUT_MS:'2000',MAIL_VERIFY_TIMEOUT_MS:'9000',
+ VERIFY_ATTEMPTS:'2',VERIFY_DELAY_MS:'100'
 });
 
 await import('../../server/index');

@@ -1,6 +1,7 @@
 import {resolveMx} from 'node:dns/promises';
 import nodemailer from 'nodemailer';
 import {fetchIncoming,verifyImap,type Incoming,type ImapAccess} from './imap';
+import {limits} from './timeout';
 
 export type Provider='google'|'microsoft'|'smtp';
 export type Detection={email:string;domain:string;provider:Provider;workspace:boolean;personal:boolean;mx:string[];note:string};
@@ -107,16 +108,26 @@ export async function sendMessage(secret:any,to:string,subject:string,text:strin
   if(!r.ok)throw Error(`Microsoft Graph отклонил отправку: ${(await r.text()).slice(0,300)}`);
   return {id:'',via:'Microsoft Graph'};
  }
- const transport=nodemailer.createTransport({host:secret.host,port:secret.port,
-  secure:secret.port===465,auth:{user:secret.user,pass:secret.pass}});
+ const transport=smtpTransport(secret);
  const info=await transport.sendMail({from,to,subject,text});
  return {id:String(info.messageId??''),via:`SMTP ${secret.host}`};
 }
 
+/** One place that turns a stored credential into a transport, so the encryption flag the person
+    actually chose is honoured. Reading it back off the port alone silently broke every provider
+    that uses STARTTLS on 587. The timeouts are the transport's own, so a host that accepts the
+    connection and then goes quiet fails here instead of hanging the request that is waiting. */
+function smtpTransport(secret:any){
+ const port=Number(secret.port);
+ const secure=typeof secret.secure==='boolean'?secret.secure:port===465;
+ const {phase}=limits();
+ return nodemailer.createTransport({host:secret.host,port,secure,
+  auth:{user:secret.user,pass:secret.pass},
+  connectionTimeout:phase,greetingTimeout:phase,socketTimeout:phase});
+}
+
 export async function verifySmtp(secret:any){
- const transport=nodemailer.createTransport({host:secret.host,port:secret.port,
-  secure:secret.port===465,auth:{user:secret.user,pass:secret.pass}});
- await transport.verify();
+ await smtpTransport(secret).verify();
 }
 
 /** Proves the credential works before anything is sent: a token refresh, or an SMTP login. */
@@ -126,7 +137,7 @@ export async function verifyAccess(secret:any,apps:MailApps){
  return `SMTP ${secret.host} принял вход`;
 }
 
-const imapAccess=(secret:any):ImapAccess=>({host:secret.imapHost,port:secret.imapPort,
+const imapAccess=(secret:any):ImapAccess=>({host:secret.imapHost,port:Number(secret.imapPort),
  secure:secret.imapSecure!==false,user:secret.imapUser||secret.user,pass:secret.pass});
 
 /** Confirms the incoming channel answers, whichever way this mailbox receives mail. */

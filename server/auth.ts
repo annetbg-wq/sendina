@@ -3,11 +3,17 @@ import {z} from 'zod';
 import {ensureAccount,issueLoginToken,consumeLoginToken,createSession,accountForSession,endSession,
  listAccounts,superadmins,isSuperadmin} from './accounts';
 import {sendSystemMail,systemMailReady,mailTemplates} from './systemmail';
-import {appAddress} from './config';
+import {appAddress,publicAddress} from './config';
 
 /** Passwordless login: an address gets a one-time link, and a new account waits for a superadmin. */
 export function mountAuth(app:Express){
- const loginLink=(token:string)=>`${appAddress(process.env)}/auth/callback?token=${encodeURIComponent(token)}`;
+ /** The callback is an route on this server: it consumes the one-time token, creates the session
+     and only then redirects to the interface. Building the link from APP_URL pointed it at the
+     interface instead, and on GitHub Pages — a static host with no such path and no fallback
+     routing — that is a 404 the person cannot get past. The link therefore always addresses the
+     backend, which is the only place the route exists, and APP_URL is where the callback sends
+     them afterwards rather than where it lives. */
+ const loginLink=(token:string)=>`${publicAddress(process.env)}/auth/callback?token=${encodeURIComponent(token)}`;
 
  app.get('/api/auth/config',(_req,res)=>res.json({
   mailReady:systemMailReady(),

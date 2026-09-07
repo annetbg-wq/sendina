@@ -1,5 +1,5 @@
 import React,{useEffect,useState} from 'react';
-import {Users,Shield,ShieldCheck,RefreshCw,Eye,ArrowLeft,Info} from 'lucide-react';
+import {Users,Shield,ShieldCheck,RefreshCw,Eye,ArrowLeft,Info,Mail,Send} from 'lucide-react';
 import {Flag} from './flag';
 import {useLocalize} from './i18n';
 
@@ -72,7 +72,10 @@ export function Accounts({api,run,busy,platformForm}:{
  const [accounts,setAccounts]=useState<any[]>([]);
  const [log,setLog]=useState<any[]>([]);
  const [view,setView]=useState<any>(null);
- const load=async()=>{setAccounts(await api('/accounts'));setLog(await api('/support-log').catch(()=>[]));};
+ const [mail,setMail]=useState<any>(null);
+ const [mailTest,setMailTest]=useState<any>(null);
+ const load=async()=>{setAccounts(await api('/accounts'));setLog(await api('/support-log').catch(()=>[]));
+  setMail(await api('/platform/mail').catch(()=>null));};
  useEffect(()=>{load().catch(()=>{});},[]);
 
  if(view)return <SupportView view={view} onBack={()=>setView(null)}/>;
@@ -82,6 +85,39 @@ export function Accounts({api,run,busy,platformForm}:{
    <p>Новый адрес получает доступ только после подтверждения. Рабочие области разделены: чужие кампании и адресаты
     доступны только в режиме поддержки, и только для чтения.</p></div>
    <button className="secondary" disabled={busy} onClick={()=>run(load)}><RefreshCw size={14}/>Обновить</button></div>
+
+  {/* Whether anyone but a superadmin can sign in at all comes down to this, and until now the
+      only place it was stated was a line in the server log. It is superadmin-only because it
+      describes the platform's own mailbox, and it never shows a credential — only which
+      variables are set and whether a real message actually left. */}
+  {mail&&<section className="card full-card">
+   <div className="card-heading"><h3><Mail size={18}/>Системная почта</h3>
+    <span className={'badge '+(mail.configured?'active':'draft')}>{mail.configured?'Настроена':'Не настроена'}</span></div>
+   <div className="padded">
+    {mail.configured
+     ?<p className="muted">Ссылки для входа отправляются с <b data-user-content>{mail.from}</b> через
+       <b data-user-content> {mail.host}:{mail.port}</b>. Проверьте отправку — это единственный способ
+       убедиться, что письма действительно доходят.</p>
+     :<><div className="alert error" role="alert">{mail.blocker?.message}</div>
+       <p className="muted">Пока системная почта не настроена, обычный пользователь войти не может:
+        ссылка ему не отправляется. Суперадмин входит по ссылке из журнала сервера — это временный
+        обходной путь, а не рабочий сценарий.</p></>}
+    <div className="mail-status">
+     <p className="tiny muted">Обязательные переменные окружения:</p>
+     <p>{mail.required.map((name:string)=>
+      <code key={name} className={mail.missing.includes(name)?'missing':''}>{name}
+       {mail.missing.includes(name)?' — не задана':' — задана'}</code>)}</p>
+     <p className="tiny muted">Необязательные: {mail.optional.map((n:string)=><code key={n}>{n}</code>)}
+      SYSTEM_SMTP_PORT по умолчанию 587, SYSTEM_MAIL_FROM по умолчанию равен SYSTEM_SMTP_USER.</p></div>
+    {mailTest&&<div className={'alert '+(mailTest.ok?'':'error')} role="status">
+     {mailTest.ok?`Проверочное письмо отправлено: ${mailTest.detail}`:`Не отправлено (${mailTest.code}): ${mailTest.detail}`}</div>}
+    <div className="button-stack">
+     <button className="secondary" disabled={busy||!mail.configured}
+      onClick={()=>run(async()=>setMailTest(await api('/platform/mail/test',{})),'Проверка системной почты выполнена')}>
+      <Send size={14}/>Отправить проверочное письмо себе</button>
+     <button className="text-link" disabled={busy}
+      onClick={()=>run(async()=>setMail(await api('/platform/mail')))}>Обновить состояние</button></div>
+   </div></section>}
 
   {platformForm}
 

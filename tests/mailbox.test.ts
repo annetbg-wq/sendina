@@ -110,6 +110,50 @@ test('settings are worked out from the domain, and Google or Microsoft are left 
  assert.equal(await guessMailSettings('company.example',[]),null);
 });
 
+test('Google and Microsoft still know their own settings, for when consent is not available yet',async()=>{
+ const {providerFallback}=await import('../server/autoconfig');
+ // Refusing to guess for these two is right — consent is the way in — but it left the advanced
+ // route as four empty boxes on exactly the deployments where consent does not exist yet, and the
+ // person was told about one missing field at a time. These settings are published and stable.
+ const google=providerFallback('google');
+ assert.equal(google?.smtp.host,'smtp.gmail.com');
+ assert.equal(google?.smtp.port,465);
+ assert.equal(google?.smtp.secure,true);
+ assert.equal(google?.imap.host,'imap.gmail.com');
+ assert.equal(google?.imap.port,993);
+ assert.equal(google?.imap.secure,true);
+ assert.equal(google?.usernameIsEmail,true,'the username is the address the person typed');
+ assert.match(google!.label,/пароль приложения/i,'and the label says what kind of password is needed');
+
+ const microsoft=providerFallback('microsoft');
+ assert.equal(microsoft?.smtp.host,'smtp.office365.com');
+ // 587 is STARTTLS, not implicit TLS, which is why encryption is carried apart from the port.
+ assert.equal(microsoft?.smtp.port,587);
+ assert.equal(microsoft?.smtp.secure,false);
+ assert.equal(microsoft?.imap.host,'outlook.office365.com');
+ assert.equal(microsoft?.imap.secure,true);
+
+ // Everything else is worked out from the domain, so there is nothing to fall back to.
+ assert.equal(providerFallback('smtp'),null);
+});
+
+test('a phase that never answers is cut off, and the whole check has a budget of its own',async()=>{
+ const {withTimeout,budget,PhaseTimeout}=await import('../server/timeout');
+ // The failure this exists for: a socket that connects and then stays silent forever.
+ await assert.rejects(()=>withTimeout('auth',40,()=>new Promise(()=>{})),
+  (e:any)=>e instanceof PhaseTimeout&&e.phase==='auth'&&e.code==='TIMEOUT');
+ // Work that finishes in time is untouched, and is told when it would have been cut off.
+ assert.equal(await withTimeout('auth',1000,async signal=>{
+  assert.equal(signal.aborted,false);return 'ok';}),'ok');
+
+ // Four phases each inside their own limit still cannot outlast the check as a whole.
+ const window=budget(100);
+ assert.ok(window.spend(1000)<=100,'a phase receives what is left, not what it asked for');
+ await new Promise(r=>setTimeout(r,120));
+ assert.equal(window.expired(),true);
+ assert.equal(window.spend(1000),0,'and once the budget is gone nothing may start');
+});
+
 test('the reply heuristic is stated, not guessed at silently',async()=>{
  const {classify}=await import('../server/mailboxes');
  assert.equal(classify('Интересно, давайте обсудим на встрече'),'positive');

@@ -134,6 +134,19 @@ function toResearch(kind:Research['kind'],raw:z.infer<typeof itemSchema>,hits:Hi
  };
 }
 
+/** The same card, built from research somebody else did.
+
+    A connector driving Sendina from a chat has already done the finding, the reading and the
+    reasoning; what it needs is somewhere durable to put the result. It lands in exactly the row
+    shape the screens read, through the same scoring function — the score is still computed here
+    from the factors and never accepted as a number, so a card that arrived from a chat and a card
+    Sendina researched itself remain comparable and neither can claim a rating it did not earn. */
+export const importedItemSchema=itemSchema;
+export function researchFromInput(kind:Research['kind'],raw:z.infer<typeof itemSchema>,
+ sources:{title:string;url:string}[]=[],at=new Date().toISOString()):Research{
+ return {...toResearch(kind,raw,[],at),sources:sources.slice(0,6)};
+}
+
 export type OpportunityInput={location:Location;industry:string;note:string};
 export type MarketInput={mode:'country'|'niche'|'manual';location:Location;niche:string};
 
