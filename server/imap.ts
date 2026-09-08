@@ -3,7 +3,20 @@ import {limits} from './timeout';
 
 /** Incoming mail. Nothing about a mailbox counts as working until a real message is read back. */
 export type ImapAccess={host:string;port:number;secure:boolean;user:string;pass:string};
-export type Incoming={uid:number;from:string;subject:string;text:string;messageId:string;inReplyTo:string;references:string[];at:string};
+export type Incoming={
+ uid:number;
+ from:string;
+ subject:string;
+ text:string;
+ messageId:string;
+ inReplyTo:string;
+ references:string[];
+ at:string;
+ /** Stable provider-side identity used for deduplication/recovery when available. */
+ providerId?:string;
+ /** Provider conversation/thread identity when available. */
+ threadId?:string;
+};
 
 /** A wrong IMAP host usually accepts the connection and then never sends a greeting, so the
     client needs its own limits: without them the read waits on the operating system and the
@@ -48,7 +61,8 @@ export async function fetchIncoming(access:ImapAccess,opts:{sinceUid?:number;lim
     messageId:String(message.envelope?.messageId??''),
     inReplyTo:String(message.envelope?.inReplyTo??''),
     references:listOf(headers.match(/^references:\s*(.+)$/im)?.[1]),
-    at:new Date(message.envelope?.date??Date.now()).toISOString()});
+    at:new Date(message.envelope?.date??Date.now()).toISOString(),
+    providerId:`imap:${Number(message.uid)}`});
   }
  }finally{await client.logout().catch(()=>{});}
  return out.sort((a,b)=>a.uid-b.uid).slice(-1*(opts.limit??50));
