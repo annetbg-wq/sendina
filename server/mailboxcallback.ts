@@ -2,6 +2,7 @@ import type {Express} from 'express';
 import {mailboxOperations} from './mailboxes';
 import {mountDeliveryRoutes} from './deliveryroutes';
 import {mountMailboxProviderFailureRecorder} from './mailboxproviderfailure';
+import {startMailboxRecoveryWorker} from './mailboxworker';
 
 /** The provider redirects a browser here, so this page is reached without the workspace token. */
 const strings={
@@ -34,4 +35,5 @@ export function mountMailboxCallback(app:Express){
  });
  mountDeliveryRoutes(app);
  mountMailboxProviderFailureRecorder(app);
+ startMailboxRecoveryWorker();
 }
