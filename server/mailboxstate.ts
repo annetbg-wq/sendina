@@ -6,6 +6,19 @@ export type MailboxStateView={state:MailboxState;ready:boolean;blockers:string[]
 
 const failed=(value:any)=>value?.status==='failed';
 const pending=(value:any)=>!value||value.status==='none';
+const timestamp=(value:any)=>{const n=Date.parse(String(value?.at??''));return Number.isFinite(n)?n:0;};
+
+/** A provider failure is current until a complete verification happened after it. We require all
+ * four proofs to be newer: one successful token refresh alone must not hide an incoming failure. */
+function currentProviderFailure(mailbox:any){
+ const failure=mailbox?.lastProviderError as undefined|{class?:ProviderFailureClass;code?:string;at?:string};
+ if(!failure)return undefined;
+ const failureAt=timestamp(failure);
+ if(!failureAt)return failure;
+ const proofs=[mailbox?.auth,mailbox?.testSend,mailbox?.imap,mailbox?.incoming];
+ const recovered=proofs.every(p=>p?.status==='ok'&&timestamp(p)>failureAt);
+ return recovered?undefined:failure;
+}
 
 /**
  * Product-facing state derived from the existing proof-based readiness model.
@@ -14,7 +27,7 @@ const pending=(value:any)=>!value||value.status==='none';
  */
 export function mailboxState(domain:any,mailbox:any,stopped=false):MailboxStateView{
  const readiness=mailboxReadiness(domain,mailbox,stopped);
- const failure=mailbox?.lastProviderError as undefined|{class?:ProviderFailureClass;code?:string};
+ const failure=currentProviderFailure(mailbox);
 
  if(mailbox?.connection==='none'||!mailbox?.connection)
   return {state:'DISCONNECTED',ready:false,blockers:readiness.blockers,action:'CONNECT'};
