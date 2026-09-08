@@ -22,10 +22,12 @@ export function mailboxState(domain:any,mailbox:any,stopped=false):MailboxStateV
   return {state:'REAUTH_REQUIRED',ready:false,blockers:readiness.blockers,action:'REAUTHENTICATE'};
  if(failure?.class==='PERMANENT')
   return {state:'ERROR',ready:false,blockers:readiness.blockers,action:'FIX_CONFIGURATION'};
+ /** A current provider failure overrides old successful proofs. */
+ if(failure?.class==='RATE_LIMITED'||failure?.class==='RETRYABLE'||failure?.class==='UNKNOWN')
+  return {state:'DEGRADED',ready:false,blockers:readiness.blockers,action:'RETRY'};
  if(readiness.ready)
   return {state:'READY',ready:true,blockers:[],action:null};
- if(failure?.class==='RATE_LIMITED'||failure?.class==='RETRYABLE'||failure?.class==='UNKNOWN'||
-    failed(mailbox?.auth)||failed(mailbox?.testSend)||failed(mailbox?.imap)||failed(mailbox?.incoming))
+ if(failed(mailbox?.auth)||failed(mailbox?.testSend)||failed(mailbox?.imap)||failed(mailbox?.incoming))
   return {state:'DEGRADED',ready:false,blockers:readiness.blockers,action:'RETRY'};
  if(pending(mailbox?.auth)||pending(mailbox?.testSend)||pending(mailbox?.imap)||pending(mailbox?.incoming))
   return {state:'CONNECTING',ready:false,blockers:readiness.blockers,action:'VERIFY'};
