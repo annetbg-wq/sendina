@@ -61,17 +61,18 @@ export function maskPlatform(s:PlatformSettings){
  };
 }
 
-/** Platform applications win; an account may still bring its own where the platform has none. */
-export function resolveMailApps(platform:PlatformSettings,account:MailApps):MailApps{
- const pick=(p:{clientId:string;clientSecret:string},a:{clientId:string;clientSecret:string})=>
-  p.clientId&&p.clientSecret?p:a;
+/**
+ * Google and Microsoft OAuth applications are platform infrastructure. Account-level OAuth app
+ * credentials may remain in legacy account records during migration, but they are deliberately
+ * ignored here: an ordinary Sendina user must never need to bring a client id or client secret.
+ */
+export function resolveMailApps(platform:PlatformSettings,_account:MailApps):MailApps{
  return {
-  google:pick(platform.google,account.google),
-  microsoft:{...pick(platform.microsoft,account.microsoft),
-   tenant:(platform.microsoft.clientId&&platform.microsoft.clientSecret?platform.microsoft.tenant:account.microsoft.tenant)||'common'}
+  google:{...platform.google},
+  microsoft:{...platform.microsoft,tenant:platform.microsoft.tenant||'common'}
  };
 }
-/** Which side supplied the application, so the interface can say whose setup is missing. */
-export const appOwner=(platform:PlatformSettings,account:MailApps,provider:'google'|'microsoft')=>
- platform[provider].clientId&&platform[provider].clientSecret?'platform'
- :account[provider].clientId&&account[provider].clientSecret?'account':'none';
+
+/** Only the platform may own a Google/Microsoft OAuth application in the production path. */
+export const appOwner=(platform:PlatformSettings,_account:MailApps,provider:'google'|'microsoft')=>
+ platform[provider].clientId&&platform[provider].clientSecret?'platform':'none';
