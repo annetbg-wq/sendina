@@ -43,6 +43,7 @@ test('revoked OAuth token is normalized as REAUTH_REQUIRED during inbound sync',
    assert.ok(e instanceof ProviderRequestError);
    assert.equal(e.provider.class,'REAUTH_REQUIRED');
    assert.equal(e.provider.status,400);
+   assert.equal(e.code,'EAUTH','existing mailbox verification maps this to AUTH_REJECTED');
    return true;
   });
  }finally{delete process.env.MAIL_PROVIDER_BASE_URL;server.close();}
