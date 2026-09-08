@@ -19,7 +19,7 @@ test('Gmail send uses multipart RFC822, thread id and returns provider ids',asyn
   const result=await sendMessage({kind:'oauth',provider:'google',email:'out@example.com',refreshToken:'r'},
    'buyer@example.net','Привет','Plain',apps,{html:'<p>HTML</p>',replyTo:'reply@example.com',
     messageId:'<fixed@example.com>',inReplyTo:'<old@example.net>',references:['<old@example.net>'],threadId:'thread-8'});
-  assert.deepEqual(result,{id:'gmail-123',threadId:'thread-9',via:'Gmail API'});
+  assert.deepEqual(result,{id:'gmail-123',threadId:'thread-9',messageId:'<fixed@example.com>',via:'Gmail API'});
   assert.equal(sentBody.threadId,'thread-8');
   const mime=Buffer.from(sentBody.raw,'base64url').toString('utf8');
   assert.match(mime,/multipart\/alternative/);
@@ -41,9 +41,10 @@ test('legacy plain-text caller remains source-compatible',async()=>{
  await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
  const address=server.address() as any;process.env.MAIL_PROVIDER_BASE_URL=`http://127.0.0.1:${address.port}`;
  try{
-  await sendMessage({kind:'oauth',provider:'google',email:'out@example.com',refreshToken:'r'},'buyer@example.net','Hi','Body',apps);
+  const result=await sendMessage({kind:'oauth',provider:'google',email:'out@example.com',refreshToken:'r'},'buyer@example.net','Hi','Body',apps);
   const mime=Buffer.from(raw,'base64url').toString('utf8');
   assert.match(mime,/Content-Type: text\/plain; charset=UTF-8/);
   assert.doesNotMatch(mime,/multipart\/alternative/);
+  assert.match(result.messageId,/^<sendina-[a-f0-9]{32}@example\.com>$/);
  }finally{delete process.env.MAIL_PROVIDER_BASE_URL;server.close();}
 });
