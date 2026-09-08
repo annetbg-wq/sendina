@@ -8,8 +8,8 @@ const account=(id:string,status:'approved'|'blocked'='approved')=>({
  approvedAt:status==='approved'?'2026-09-08T00:00:00Z':null,approvedBy:null,lastLoginAt:null
 });
 
-test('periodic recovery syncs connected mailboxes, skips revoked/disconnected ones and records safe provider failures',async()=>{
- const calls:string[]=[];const recorded:string[]=[];
+test('periodic recovery syncs replies, reconciles UNKNOWN evidence and records provider failures',async()=>{
+ const calls:string[]=[];const recorded:string[]=[];const reconciled:string[]=[];
  const result=await recoverMailboxesOnce({
   listAccounts:async()=>[account('a'),account('b'),account('blocked','blocked')],
   status:async ctx=>ctx.accountId==='a'?{domains:[{mailboxes:[
@@ -25,13 +25,21 @@ test('periodic recovery syncs connected mailboxes, skips revoked/disconnected on
     class:'RETRYABLE',code:'503',status:503,retryAfterMs:null,detail:'provider body that must not be persisted here'});
    return {added:0};
   },
+  listUnknown:async ctx=>ctx.accountId==='a'
+   ?[{id:'unknown-accepted',senderEmail:'ready@example.com'}]
+   :[{id:'unknown-pending',senderEmail:'temporary@example.com'}],
+  reconcile:async(_ctx,input)=>{
+   reconciled.push(input.id);
+   return {outcome:input.id==='unknown-accepted'?'sent':'pending'};
+  },
   recordProviderFailure:async(_ctx,email,error)=>{
    recorded.push(`${email}:${error.provider.class}:${error.provider.status}`);
   }
  });
  assert.deepEqual(calls,['a:ready@example.com:100','b:temporary@example.com:100']);
+ assert.deepEqual(reconciled,['unknown-accepted','unknown-pending']);
  assert.deepEqual(recorded,['temporary@example.com:RETRYABLE:503']);
- assert.deepEqual(result,{accounts:2,mailboxes:4,synced:1,skipped:3,errors:1});
+ assert.deepEqual(result,{accounts:2,mailboxes:4,synced:1,skipped:3,errors:1,unknownChecked:2,unknownResolved:1});
 });
 
 test('automatic recovery can be explicitly disabled for maintenance/test deployments',()=>{
