@@ -29,7 +29,7 @@ function providerStub(){
  const calls:string[]=[];
  const server=createServer((req,res)=>{
   const url=req.url??'';calls.push(`${req.method} ${url}`);res.setHeader('content-type','application/json');
-  if(url==='/token')return res.end(JSON.stringify({access_token:'access'}));
+  if(url==='/token'||url.endsWith('/oauth2/v2.0/token'))return res.end(JSON.stringify({access_token:'access'}));
   if(url.includes('/gmail/v1/users/me/messages/send'))return res.end(JSON.stringify({id:'g-send',threadId:'g-thread'}));
   if(url.includes('/gmail/v1/users/me/profile'))return res.end(JSON.stringify({historyId:'g-history'}));
   if(url.includes('/gmail/v1/users/me/messages'))return res.end(JSON.stringify({messages:[]}));
@@ -74,5 +74,6 @@ test('Google and Microsoft OAuth send + inbound sync work with 465/587/993 block
   assert.ok(stub.calls.some(c=>c.includes('/v1.0/me/sendMail')),'Microsoft Graph carried the send');
   assert.ok(stub.calls.some(c=>c.includes('/gmail/v1/users/me/profile')),'Gmail API carried inbound sync');
   assert.ok(stub.calls.some(c=>c.includes('/mailFolders/inbox/messages/delta')),'Graph API carried inbound sync');
+  assert.ok(stub.calls.some(c=>c.includes('/oauth2/v2.0/token')),'Microsoft OAuth token refresh stayed on HTTPS');
  }finally{delete process.env.MAIL_PROVIDER_BASE_URL;stub.server.close();}
 });
