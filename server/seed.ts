@@ -127,6 +127,17 @@ export function normalize(s:any):State{
       const merged=typeof m==='string'?box(m):{...box(m.email),...m};
       for(const field of ['auth','testSend','imap','incoming'])
         if(!merged[field]||typeof merged[field]!=='object')merged[field]={status:'none',at:null,detail:''};
+      /** A disconnected record may retain non-secret transport metadata for migration/debugging,
+       * but none of its old runtime evidence is valid for a future connection. This normalization
+       * runs before a reconnect mutation too, so old successful checks can never make a newly
+       * connected credential READY. */
+      if(merged.connection==='none'){
+        merged.connectedAt=null;
+        for(const field of ['auth','testSend','imap','incoming'])merged[field]={status:'none',at:null,detail:''};
+        merged.incomingUid=0;
+        merged.incomingCursor=null;
+        merged.lastProviderError=null;
+      }
       return merged;
     });
     delete d.verified;
