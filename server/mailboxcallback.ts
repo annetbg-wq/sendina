@@ -1,5 +1,6 @@
 import type {Express} from 'express';
 import {mailboxOperations} from './mailboxes';
+import {mountDeliveryRoutes} from './deliveryroutes';
 
 /** The provider redirects a browser here, so this page is reached without the workspace token. */
 const strings={
@@ -8,7 +9,7 @@ const strings={
  en:{ok:'Mailbox connected',okLead:'One test send is still required; without it the mailbox does not become ready.',
   fail:'Could not connect',back:'Return to the Sendina tab.'}
 };
-const escape=(s:string)=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
+const escape=(s:string)=>s.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[c]!));
 const page=(lang:'ru'|'en',title:string,lead:string,detail:string,bad:boolean)=>
 `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>${escape(title)} — Sendina</title>
 <style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f7f9fc;font:14px/1.7 system-ui,-apple-system,Segoe UI,Arial,sans-serif;color:#182133;padding:24px}
@@ -30,4 +31,5 @@ export function mountMailboxCallback(app:Express){
    res.type('html').send(page(lang,t.ok,`${result.email} · ${t.okLead}`,'',false));
   }catch(e:any){res.status(400).type('html').send(page(lang,t.fail,t.back,String(e.message).slice(0,300),true));}
  });
+ mountDeliveryRoutes(app);
 }
