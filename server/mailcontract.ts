@@ -39,9 +39,14 @@ export interface MailProvider {
   checkIncoming():Promise<string>;
 }
 
+/**
+ * Advertise only capabilities that the current contract can actually fulfill.
+ * THREADS and PUSH_NOTIFICATIONS are intentionally absent until the Gmail
+ * history / Graph delta slices expose those operations through this interface.
+ */
 const capabilities:Record<Provider,ReadonlySet<MailCapability>>={
-  google:new Set<MailCapability>(['SEND','READ','THREADS','REPLY_DETECTION']),
-  microsoft:new Set<MailCapability>(['SEND','READ','THREADS','REPLY_DETECTION']),
+  google:new Set<MailCapability>(['SEND','READ','REPLY_DETECTION']),
+  microsoft:new Set<MailCapability>(['SEND','READ','REPLY_DETECTION']),
   smtp:new Set<MailCapability>(['SEND','READ','REPLY_DETECTION'])
 };
 
