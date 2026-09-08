@@ -12,7 +12,8 @@ import {Markets} from './markets';
 import {Replies} from './replies';
 import {Analytics} from './analytics';
 import {Accounts} from './accounts';
-import {mailboxReadiness,domainReadiness} from '../server/readiness';
+import {domainReadiness} from '../server/readiness';
+import {mailboxUi,mailboxTransportLabel,isHttpsApiMailbox} from './mailbox-ui';
 import type {Location} from '../server/geo';
 
 /** The menu is built from the role rather than filtered afterwards: an ordinary account never
@@ -29,12 +30,15 @@ const blockers:Record<string,string>={EMERGENCY_STOP:'Аварийная ост�
  TEST_SEND_REQUIRED:'Нужна тестовая отправка',TEST_SEND_FAILED:'Тестовая отправка не прошла',
  INCOMING_CHANNEL_REQUIRED:'Нужна проверка приёма',INCOMING_CHANNEL_FAILED:'Приём почты недоступен',
  INCOMING_MESSAGE_REQUIRED:'Тестовое письмо ещё не прочитано',INCOMING_MESSAGE_FAILED:'Тестовое письмо не пришло',
+ PROVIDER_REAUTH_REQUIRED:'Нужно заново подключить почтовый аккаунт',PROVIDER_RATE_LIMITED:'Провайдер временно ограничил запросы',
+ PROVIDER_TEMPORARILY_UNAVAILABLE:'Провайдер временно недоступен',PROVIDER_ERROR:'Ошибка конфигурации почтового провайдера',
+ PROVIDER_ERROR_UNKNOWN:'Не удалось подтвердить состояние почтового провайдера',
  DNS_NOT_CHECKED:'DNS не проверялся',SPF_MISSING:'Нет записи SPF',DKIM_MISSING:'Нет записи DKIM',DMARC_MISSING:'Нет записи DMARC',
  SENDING_DISABLED_ON_DEPLOYMENT:'Отправка выключена на развёртывании',SENDER_NOT_READY:'Нет проверенного ящика',
  DOMAIN_LIMIT_NOT_SET:'Не задан суточный лимит домена',DOMAIN_LIMIT:'Суточный лимит домена исчерпан'};
-const checkLabels:[string,string][]=[['auth','Вход'],['testSend','Отправка'],['imap','Приём'],['incoming','Чтение письма']];
+const checkLabels:[string,string][]=[['auth','Вход'],['testSend','Отправка'],['imap','Канал приёма'],['incoming','Чтение теста']];
 const reasons:Record<string,string>={CHECKS_PASSED:'Разрешено правилами',EMERGENCY_STOP:'Аварийная остановка',CAMPAIGN_PAUSED:'Кампания не активна',GLOBAL_SUPPRESSION:'Адресат исключён',REPLY_RECEIVED:'Ответ уже получен',DUPLICATE_RECIPIENT:'Повтор адреса в другой кампании',LEGAL_BASIS_REQUIRED:'Нет правового основания',CONTACT_REASON_REQUIRED:'Нет причины обращения',SOURCE_UNVERIFIED:'Источник не подтверждён',MANUAL_APPROVAL_REQUIRED:'Отправка только вручную',FIRST_BATCH_APPROVAL_REQUIRED:'Нужно подтверждение первой партии',DOMAIN_UNVERIFIED:'Домен не подтверждён',DOMAIN_LIMIT:'Достигнут суточный лимит домена',
- SENT:'Отправлено',SEND_FAILED:'Ошибка отправки',RECIPIENT_NOT_ALLOWLISTED:'Адрес не в списке разрешённых',
+ SENT:'Отправлено',SEND_FAILED:'Ошибка отправки',SEND_UNKNOWN:'Результат отправки уточняется',SEND_OUTCOME_UNKNOWN:'Результат предыдущей отправки неизвестен',RECIPIENT_NOT_ALLOWLISTED:'Адрес не в списке разрешённых',
  SENDER_NOT_READY:'Нет проверенного ящика',ALREADY_SENT:'Письмо уже отправлено',NO_ADDRESS:'Нет подтверждённого адреса',
  MESSAGE_MISSING:'Черновик не найден',CAMPAIGN_MISSING:'Кампания не найдена',RECIPIENT_MISSING:'Адресат не найден'};
 
@@ -61,8 +65,10 @@ function App(){
  const [advanced,setAdvanced]=useState(false);
  /** Whether the password route has been asked for where consent is the intended one. */
  const [expert,setExpert]=useState(false);
- /** The last finished mailbox check, kept so its four steps stay readable after the modal closes. */
+ /** The last finished mailbox check, kept as optional technical diagnostics after the product state. */
  const [check,setCheck]=useState<any>(null);
+ /** Product mailbox states come from the backend state machine, never from UI inference. */
+ const [mailStatus,setMailStatus]=useState<any>(null);
  /** Sending readiness, and the result of the last run. Read from the server, never inferred. */
  const [sender,setSender]=useState<any>(null);
  const [sendRun,setSendRun]=useState<any>(null);
@@ -72,6 +78,7 @@ function App(){
  useEffect(()=>{localStorage.setItem('sendina-locale',locale);document.documentElement.lang=locale;document.title=locale==='ru'?'Sendina — Монетизатор':'Sendina — Monetizer';},[locale]);
  const [state,setState]=useState<State|null>(null),[page,setPage]=useState('Главная'),[query,setQuery]=useState(''),[modal,setModal]=useState(''),[notice,setNotice]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[selected,setSelected]=useState(''),[preview,setPreview]=useState<any[]>([]),[menu,setMenu]=useState(false);
  const reload=async()=>{setState(await api('/state'));
+  api('/mailboxes/status').then(setMailStatus).catch(()=>setMailStatus(null));
   api('/capabilities').then(c=>{setCaps(c);setAccount(c.account??null);}).catch(()=>setCaps(null));
   api('/sender').then(setSender).catch(()=>setSender(null));};
  useEffect(()=>{let active=true;const load=async()=>{for(let attempt=0;attempt<4;attempt++){try{await reload();return;}catch(e:any){if(e.status===401)return;if(attempt===3){if(active)setError(e.message);return;}await new Promise(r=>setTimeout(r,750));}}};void load();return()=>{active=false;};},[]);
@@ -126,38 +133,31 @@ function App(){
 </div></div>,locale);
 
  const campaigns=state.campaigns.filter(c=>match(c.name+' '+c.market));
- const ready=state.domains.some(d=>domainReadiness(d,state.stopped).ready);
+ const mailDomains=mailStatus?.domains??state.domains;
+ const ready=mailStatus?mailDomains.some((d:any)=>(d.mailboxes??[]).some((m:any)=>m.state==='READY')):state.domains.some(d=>domainReadiness(d,state.stopped).ready);
  const link=(label:string,target:string)=><button className="text-link" onClick={()=>go(target)}>{label}<ArrowRight size={14}/></button>;
  const openMail=()=>{go('Настройки');setSection('mail');};
  const header=(Icon:any,title:string,action?:React.ReactNode)=><div className="card-heading"><h3><Icon size={18}/>{title}</h3>{action}</div>;
  const campaignTable=(compact=false)=><div className="table-scroll"><table><thead><tr><th>Цель</th><th>Рынок</th><th>Состояние</th><th>Результат</th>{!compact&&<th/>}</tr></thead><tbody>{campaigns.map(c=><tr key={c.id}><td><button className="row-link" onClick={()=>{setSelected(c.id);setModal('campaign');}} data-user-content>{c.name}</button>{!compact&&<small data-user-content>{c.event}</small>}</td><td><Flag market={c.market}/><span data-user-content>{c.market}</span></td><td><span className={'badge '+c.status}>{c.status==='active'?'Активна':c.status==='paused'?'На паузе':'Черновик'}</span></td><td>{c.positive} ответов <span className="muted">· {c.sent?(c.positive/c.sent*100).toFixed(1):'0'}%</span></td>{!compact&&<td><button className="icon-button" disabled={busy} aria-label={c.status==='active'?'Приостановить':'Активировать'} onClick={()=>run(()=>api(`/campaigns/${c.id}/status`,{status:c.status==='active'?'paused':'active'}),'Статус кампании обновлён')}>{c.status==='active'?<Pause size={16}/>:<Play size={16}/>}</button></td>}</tr>)}</tbody></table>{!campaigns.length&&<div className="empty">Кампаний пока нет. Создайте первую рассылку — или начните с «Возможностей».</div>}</div>;
 
- /** The mailbox screen, unchanged in what it does, now living inside Settings. */
+ /** Product mailbox state is primary. The four proof checks remain available only as diagnostics. */
  const mailSection=<>
-  <div className="info-banner"><ShieldCheck size={24}/><div><b>Ящик готов только после тестовой отправки</b>
-   <p>Введите рабочий адрес — Sendina сама определит провайдера. Технические параметры SMTP и IMAP нужны
-    только в расширенной настройке, если определить автоматически не удалось.</p></div>
+  <div className="info-banner"><ShieldCheck size={24}/><div><b>Google и Microsoft работают через HTTPS API</b>
+   <p>Подключите рабочий адрес через Google или Microsoft. SMTP/IMAP для них не требуются; ручной SMTP/IMAP остаётся отдельным расширенным режимом для других провайдеров.</p></div>
    <button onClick={()=>{setDetection(null);setAdvanced(false);setExpert(false);setModal('connect');}}><Plus size={16}/>Подключить ящик</button></div>
-  {/* A check always ends, and this is where it says how. Four steps, in the order they were
-      attempted, each with its own outcome — so "не сработало" is never the whole answer. */}
   {check&&<section className={'card full-card check-result '+(check.ready?'ok':'failed')}>
-   <div className="card-heading"><h3>{check.ready?<Check size={18}/>:<X size={18}/>}
-    Проверка ящика <span data-user-content>{check.email}</span></h3>
-    <span className={'badge '+(check.ready?'active':'draft')}>{check.ready?'Готов':`Остановилась: ${check.failedStepLabel||'—'}`}</span></div>
+   <div className="card-heading"><h3>{check.ready?<Check size={18}/>:<Info size={18}/>}
+    Техническая диагностика <span data-user-content>{check.email}</span></h3>
+    <span className={'badge '+(check.ready?'active':'draft')}>{check.ready?'Все проверки пройдены':`Требует внимания: ${check.failedStepLabel||'—'}`}</span></div>
    <div className="padded">
     <ol className="check-steps">{checkLabels.map(([key,label])=>{
-      const step=check.checks?.[key];const status=step?.status??'none';
+      const proof=check.checks?.[key];const status=proof?.status??'none';
       return <li key={key} className={status}>
        <span className="check-step-name">{status==='ok'?<Check size={13}/>:status==='failed'?<X size={13}/>:<span className="check-dot"/>}{label}</span>
-       <span className="tiny muted" data-user-content>{step?.detail||'—'}</span>
-       {step?.code&&step.code!=='OK'&&<code className="tiny">{step.code}</code>}</li>;})}</ol>
-    {!check.ready&&<p className="tiny muted">Причина: <code>{check.reason||'FAILED'}</code>.
-     {check.reason==='TIMEOUT'&&' Сервер прервал шаг по таймауту — узел принял соединение, но не ответил. Проверьте host, порт и шифрование.'}
-     {check.reason==='AUTH_REJECTED'&&' Провайдер отклонил пароль. Для Gmail и Microsoft 365 нужен пароль приложения, а не обычный пароль аккаунта.'}
-     {check.reason==='HOST_NOT_FOUND'&&' Узел не найден в DNS — проверьте имя сервера.'}</p>}
-    <button className="text-link" onClick={()=>setCheck(null)}>Скрыть результат</button></div></section>}
-  {/* Whether a real message could leave, stated once and read from the server. Every screen and
-      every connector reads this same answer, so none of them can disagree about it. */}
+       <span className="tiny muted" data-user-content>{proof?.detail||'—'}</span>
+       {proof?.code&&proof.code!=='OK'&&<code className="tiny">{proof.code}</code>}</li>;})}</ol>
+    {!check.ready&&<p className="tiny muted">Технический код: <code>{check.reason||'FAILED'}</code>. Основной статус ящика показан ниже и рассчитывается сервером.</p>}
+    <button className="text-link" onClick={()=>setCheck(null)}>Скрыть диагностику</button></div></section>}
   {sender&&<section className={'card full-card send-state '+(sender.sendingEnabled?'ok':'blocked')}>
    <div className="card-heading"><h3><Send size={18}/>Готовность к отправке</h3>
     <span className={'badge '+(sender.sendingEnabled?'active':'draft')}>
@@ -165,7 +165,7 @@ function App(){
    <div className="padded">
     {sender.sender
      ?<p className="muted">Письма уйдут через <b data-user-content>{sender.sender.email}</b>.</p>
-     :<p className="muted">Ни один ящик пока не прошёл все четыре проверки, поэтому отправлять не через что.</p>}
+     :<p className="muted">Ни один ящик пока не находится в состоянии «Готов», поэтому отправка заблокирована.</p>}
     {sender.allowance&&<p className="tiny muted">Суточный лимит домена: {sender.allowance.used} / {sender.allowance.limit}
      · осталось {sender.allowance.remaining}</p>}
     {!sender.deployment?.sendingAllowed&&<div className="alert error" role="alert">
@@ -177,37 +177,36 @@ function App(){
     {sender.blockers?.length>0&&<ul className="blockers">{sender.blockers.map((b:string)=>
      <li key={b}>{blockers[b]??b}</li>)}</ul>}
    </div></section>}
-  {!state.domains.length&&<div className="empty card">Ящики не подключены. Пока Sendina не может отправить ни одного письма.</div>}
-  <div className="ideas-grid">{state.domains.map(d=>{const dr=domainReadiness(d,state.stopped);return <section className="card" key={d.id}>
+  {!mailDomains.length&&<div className="empty card">Ящики не подключены. Пока Sendina не может отправить ни одного письма.</div>}
+  <div className="ideas-grid">{mailDomains.map((d:any)=>{const domainReady=(d.mailboxes??[]).some((m:any)=>m.state==='READY'||m.ready===true);return <section className="card" key={d.id}>
    <div className="card-heading"><h3><Shield size={18}/><span data-user-content>{d.name}</span></h3>
-    <span className={'badge '+(dr.ready?'active':'draft')}>{dr.ready?'Готов к отправке':'Не готов'}</span></div>
-   <div className="mailbox-list">{d.mailboxes.map((m:any)=>{const mr=mailboxReadiness(d,m,state.stopped);return <div className="mailbox" key={m.email}>
+    <span className={'badge '+(domainReady?'active':'draft')}>{domainReady?'Готов к отправке':'Не готов'}</span></div>
+   <div className="mailbox-list">{d.mailboxes.map((m:any)=>{const ui=mailboxUi(m);const transport=mailboxTransportLabel(m);return <div className="mailbox" key={m.email}>
     <div className="mailbox-head"><b data-user-content>{m.email}</b>
-     <span className={'badge '+(mr.ready?'active':'draft')}>{mr.ready?'Готов':'Не готов'}</span></div>
-    <small>{providers[m.provider]??providers.unknown} · {connections[m.connection]}</small>
-    {m.transport&&<p className="tiny muted" data-user-content>{m.transport.label} · SMTP {m.transport.smtp.host}:{m.transport.smtp.port} · IMAP {m.transport.imap.host}:{m.transport.imap.port}</p>}
-    {m.connection!=='none'&&<div className="check-row">{checkLabels.map(([key,label])=>{
-      const value=(m as any)[key]?.status??'none';
-      return <span key={key} className={'check '+value} title={(m as any)[key]?.detail||''}>
-       {value==='ok'?<Check size={11}/>:value==='failed'?<X size={11}/>:<span className="check-dot"/>}{label}</span>;})}</div>}
-    {mr.blockers.length>0&&<ul className="blockers">{mr.blockers.map((b:string)=><li key={b}>{blockers[b]??b}</li>)}</ul>}
+     <span className={'badge '+ui.badge}>{ui.label}</span></div>
+    <small>{providers[m.provider]??providers.unknown} · {connections[m.connection]??m.connection}</small>
+    {transport&&<p className="tiny muted">{transport}</p>}
+    {m.transport&&!isHttpsApiMailbox(m)&&<p className="tiny muted" data-user-content>{m.transport.label} · SMTP {m.transport.smtp.host}:{m.transport.smtp.port} · IMAP {m.transport.imap.host}:{m.transport.imap.port}</p>}
+    <p className="tiny muted">{ui.lead}</p>
+    {(m.blockers??[]).length>0&&<ul className="blockers">{m.blockers.map((b:string)=><li key={b}>{blockers[b]??b}</li>)}</ul>}
+    {m.connection!=='none'&&<details><summary className="text-link">Техническая диагностика</summary>
+     <div className="check-row">{checkLabels.map(([key,label])=>{const value=(m as any)[key]?.status??'none';return <span key={key} className={'check '+value} title={(m as any)[key]?.detail||''}>
+      {value==='ok'?<Check size={11}/>:value==='failed'?<X size={11}/>:<span className="check-dot"/>}{label}</span>;})}</div></details>}
     <div className="mailbox-actions">
-     {m.connection==='none'
+     {ui.primaryAction==='CONNECT'
       ?<button className="secondary small-button" onClick={()=>{setDetection(null);setAdvanced(false);setExpert(false);setModal('connect');}}>Подключить</button>
-      :<><button className="secondary small-button" disabled={busy}
-         onClick={()=>run(async()=>{setCheck(null);const r=await api('/mailboxes/verify',{email:m.email});
-          setCheck({email:m.email,...r});
-          setNotice(r.ready?`Ящик ${m.email} проверен и готов.`
-           :`Проверка ${m.email} остановилась на шаге «${r.failedStepLabel||'—'}» (${r.reason||'FAILED'}).`);})}>Проверить ящик</button>
+      :<>{ui.primaryAction==='REAUTHENTICATE'&&<button className="secondary small-button" disabled={busy}
+         onClick={()=>run(async()=>{setDetection(await api('/mailboxes/detect',{email:m.email}));setAdvanced(false);setExpert(false);setModal('connect');})}>Войти снова</button>}
         <button className="secondary small-button" disabled={busy}
-         onClick={()=>run(async()=>{const r=await api('/mailboxes/sync',{email:m.email});
-          setNotice(`Принято ответов: ${r.added}, без совпадения: ${r.unmatched}`);})}>Принять ответы</button>
+         onClick={()=>run(async()=>{setCheck(null);const r=await api('/mailboxes/verify',{email:m.email});setCheck({email:m.email,...r});
+          setNotice(r.ready?`Ящик ${m.email} проверен и готов.`:`Проверка ${m.email} завершена: ${r.reason||'FAILED'}.`);})}>
+         {m.state==='READY'?'Перепроверить':'Проверить состояние'}</button>
+        {m.state==='READY'&&<button className="secondary small-button" disabled={busy}
+         onClick={()=>run(async()=>{const r=await api('/mailboxes/sync',{email:m.email});setNotice(`Принято ответов: ${r.added}, без совпадения: ${r.unmatched}`);})}>Принять ответы</button>}
         <button className="text-link" disabled={busy} onClick={()=>run(()=>api('/mailboxes/disconnect',{email:m.email}),'Ящик отключён')}>Отключить</button></>}
     </div></div>;})}</div>
    <div className="card-footer domain-foot">
     <button className="secondary" disabled={busy} onClick={()=>{setSelected(d.id);setModal('dns');}}><RefreshCw size={14}/>Проверить DNS</button>
-    {/* A sending allowance is a judgement about the reputation of this domain, so it starts at
-        zero and only an operator raises it. Until then the rules refuse every message. */}
     <form className="allowance" onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);
       run(()=>api(`/domains/${d.id}/limit`,{limit:Number(f.get('limit'))}),'Суточный лимит домена сохранён');}}>
      <label>Писем в сутки<input name="limit" type="number" min={0} max={2000} defaultValue={d.limit??0}/></label>
@@ -258,7 +257,7 @@ function App(){
  <div>{account?.email?<b data-user-content>{account.email}</b>:<b>Моя рабочая область</b>}
   <small>{superadmin?'Суперадмин':browserDemo()?'Демонстрационный режим':'Рабочая область аккаунта'}</small></div>
  {account&&<button className="icon-button" aria-label="Выйти" onClick={()=>{void api('/auth/logout').catch(()=>{});setSession('');location.reload();}}><Power size={15}/></button>}</div></aside>
- <div className="main-shell"><header className="topbar"><button className="mobile-menu icon-button" aria-label="Открыть меню" onClick={()=>setMenu(!menu)}><Menu/></button><label className="search"><Search size={17}/><input aria-label="Поиск" placeholder="Поиск по рабочей области" value={query} onChange={e=>setQuery(e.target.value)}/><kbd>⌕</kbd></label><div className="top-actions"><button className="locale-switch" aria-label="Язык интерфейса" onClick={()=>setLocale(locale==='ru'?'en':'ru')}><Globe size={14}/>{locale.toUpperCase()}</button><span className={'system '+(state.stopped?'halted':'')}><span className="status-icon">{state.stopped?<Pause size={11}/>:<Check size={11}/>}</span>{state.stopped?'Отправки остановлены':ready?'Отправитель готов':'Отправитель не подключён'}</span><button className="icon-button notification" aria-label="Журнал уведомлений" onClick={()=>setModal('audit')}><Bell size={20}/><i/></button><button className="profile" onClick={()=>go('Настройки')}><span className="avatar">A</span><ChevronDown size={14}/></button></div></header>
+ <div className="main-shell"><header className="topbar"><button className="mobile-menu icon-button" aria-label="Открыть меню" onClick={()=>setMenu(!menu)}><Menu/></button><label className="search"><Search size={17}/><input aria-label="Поиск" placeholder="Поиск по рабочей области" value={query} onChange={e=>setQuery(e.target.value)}/><kbd>⌕</kbd></label><div className="top-actions"><button className="locale-switch" aria-label="Язык интерфейса" onClick={()=>setLocale(locale==='ru'?'en':'ru')}><Globe size={14}/>{locale.toUpperCase()}</button><span className={'system '+(state.stopped?'halted':'')}><span className="status-icon">{state.stopped?<Pause size={11}/>:<Check size={11}/>}</span>{state.stopped?'Отправки остановлены':ready?'Отправитель готов':'Отправитель не готов'}</span><button className="icon-button notification" aria-label="Журнал уведомлений" onClick={()=>setModal('audit')}><Bell size={20}/><i/></button><button className="profile" onClick={()=>go('Настройки')}><span className="avatar">A</span><ChevronDown size={14}/></button></div></header>
  <main><div className="breadcrumb">Рабочая область <ChevronRight size={12}/> <span>{page}</span></div><div className="page-title"><div><h1>{page==='Главная'?'Что вы хотите получить сегодня?':page}</h1><p>{page==='Главная'?'От первой идеи до измеримого результата — в одной системе.':({Рассылки:'Ваши цели, эксперименты и результаты в одном месте.',Возможности:'Что стоит продавать в выбранной точке прямо сейчас.',Рынки:'Где продавать то, что у вас есть.',Ответы:'Все диалоги и следующие действия вашей команды.',Аналитика:'Оптимизируйте результат, а не количество отправок.',Настройки:'Почта, интеграции, исключения и рабочая область.',Аккаунты:'Доступ, подтверждение и режим поддержки.'} as Record<string,string>)[page]}</p></div>{page==='Рассылки'?<button onClick={create}><Plus size={16}/>Создать рассылку</button>:page==='Главная'?<span className="date">{new Date().toLocaleDateString(locale==='ru'?'ru-RU':'en-US',{day:'numeric',month:'long',year:'numeric'})}</span>:null}</div>
  {browserDemo()&&<div className="demo-banner"><Info size={14}/>Демо в браузере · данные хранятся на этом устройстве<button className="text-link" onClick={()=>{go('Настройки');setSection('server');}}>Подключить сервер<ArrowRight size={12}/></button></div>}
  {state.demo&&!browserDemo()&&<div className="demo-banner"><Info size={14}/>Демонстрационный режим · кампании, ответы и показатели — примеры<button className="text-link" onClick={()=>run(()=>api('/demo',{enabled:false}),'Демонстрационные данные удалены')}>Очистить рабочую область<ArrowRight size={12}/></button></div>}
@@ -313,10 +312,10 @@ function App(){
    :<div className="empty">Избранного пока нет. Исследуйте возможности и сохраните лучшие.</div>}</div>
   <div className="card-footer">{link('Исследовать возможности','Возможности')}</div></section>
  <section className="card">{header(Mail,'Домены и почта',<button className="text-link" onClick={openMail}>Управление<ArrowRight size={14}/></button>)}
-  <div className="table-scroll">{state.domains.length?<table><thead><tr><th>Домен</th><th>Проверка</th></tr></thead>
-   <tbody>{state.domains.map(d=>{const r=domainReadiness(d,state.stopped);return <tr key={d.id}>
+  <div className="table-scroll">{mailDomains.length?<table><thead><tr><th>Домен</th><th>Состояние</th></tr></thead>
+   <tbody>{mailDomains.map((d:any)=>{const mailbox=(d.mailboxes??[])[0];const ui=mailbox?mailboxUi(mailbox):null;return <tr key={d.id}>
     <td><b data-user-content>{d.name}</b>{d.mailboxes.map((m:any)=><small key={m.email} data-user-content>{m.email}</small>)}</td>
-    <td><span className={'badge '+(r.ready?'active':'draft')}>{r.ready?'Готов':blockers[r.blockers[0]]??'Не готов'}</span></td></tr>;})}</tbody></table>
+    <td><span className={'badge '+(ui?.badge??'draft')}>{ui?.label??'Нет ящика'}</span></td></tr>;})}</tbody></table>
    :<div className="empty">Ящики не подключены.</div>}</div>
   <div className="card-footer"><button className="text-link" onClick={openMail}>Подключить почтовый ящик<ArrowRight size={14}/></button></div></section></div></div></>}
 
@@ -462,21 +461,12 @@ function App(){
     fields:[['openaiKey','Ключ OpenAI','password','sk-…'],['openaiModel','Модель','text','gpt-4.1-mini'],['aiGatewayUrl','Адрес шлюза (необязательно)','text','https://api.openai.com/v1']]},
    {key:'search',title:'Поиск адресатов',lead:'Тоже обычно предоставлено платформой. Свой ключ поиска нужен, только если вы хотите отделить свои запросы от общих.',
     done:caps?.connections?.search?.configured,
-    fields:[['searchProvider','Провайдер','select',''],['searchKey','Ключ поискового API','password','']]},
-   {key:'google',title:'Google Workspace',lead:'Обычно это заполняет администратор Sendina один раз на всю платформу, и вам ничего вводить не нужно. Эти поля — запасной вариант: своё приложение Google Cloud Console со scope gmail.send и gmail.readonly.',
-    done:caps?.connections?.google?.configured,
-    fields:[['google.clientId','Client ID','text',''],['google.clientSecret','Client secret','password','']]},
-   {key:'microsoft',title:'Microsoft 365',lead:'Тоже обычно настраивает администратор платформы. Запасной вариант — своё приложение Entra ID со scope Mail.Send, Mail.Read и offline_access.',
-    done:caps?.connections?.microsoft?.configured,
-    fields:[['microsoft.clientId','Client ID','text',''],['microsoft.clientSecret','Client secret','password',''],['microsoft.tenant','Идентификатор тенанта','text','common']]}];
+    fields:[['searchProvider','Провайдер','select',''],['searchKey','Ключ поискового API','password','']]}];
   const current=steps[Math.min(step,steps.length-1)];
-  const redirect=`${backendUrl()||location.origin}/oauth/mailbox/callback`;
   return <>
    <ol className="wizard-steps">{steps.map((st,i)=><li key={st.key} className={i===step?'current':st.done?'done':''}>
     <button className="text-link" onClick={()=>setStep(i)}>{st.done?<Check size={12}/>:<span className="step-number">{i+1}</span>}{st.title}</button></li>)}</ol>
    <p className="muted">{current.lead}</p>
-   {(current.key==='google'||current.key==='microsoft')&&<label>Адрес возврата (укажите его у провайдера)
-    <input readOnly value={redirect} onFocus={e=>e.currentTarget.select()}/></label>}
    <form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);
      const patch:any={};
      for(const [name] of current.fields){const value=String(f.get(name)??'');
@@ -488,7 +478,7 @@ function App(){
      ?<label key={name}>{label}<select name={name} defaultValue={caps?.connections?.search?.provider??''}>
         <option value="">Не подключён</option><option value="brave">Brave</option><option value="tavily">Tavily</option><option value="serper">Serper</option></select></label>
      :<label key={name}>{label}<input name={name} type={kind} placeholder={placeholder}
-        defaultValue={name==='openaiModel'?(caps?.connections?.openai?.model??''):name==='microsoft.tenant'?(caps?.connections?.microsoft?.tenant??''):name==='aiGatewayUrl'?(caps?.connections?.openai?.gateway??''):''}/></label>)}
+        defaultValue={name==='openaiModel'?(caps?.connections?.openai?.model??''):name==='aiGatewayUrl'?(caps?.connections?.openai?.gateway??''):''}/></label>)}
     <p className="tiny muted">{current.done?'Уже заполнено. Пустое поле оставит сохранённое значение без изменений.':'Поля пока не заполнены.'}</p>
     <div className="button-stack">
      {step>0&&<button type="button" className="secondary" onClick={()=>setStep(step-1)}>Назад</button>}
@@ -584,35 +574,27 @@ function App(){
   :<><div className="info-banner compact"><Info size={20}/><div>
     <b>{providers[detection.provider]??providers.unknown}</b>
     <p data-user-content>{detection.route==='oauth-unconfigured'
-     ?'Подключение по адресу и паролю приложения. Настройки сервера подставлены автоматически.'
-     :detection.note}</p>
+     ?'Подключение через API этого провайдера временно недоступно: OAuth-приложение Sendina ещё не настроено.'
+     :detection.route==='oauth'?'Подключение выполняется через официальный API провайдера по HTTPS. Пароль, SMTP и IMAP не нужны.':detection.note}</p>
     {detection.mx?.length>0&&superadmin&&<p className="tiny" data-user-content>MX: {detection.mx.slice(0,3).join(', ')}</p>}</div></div>
    {detection.personal&&<div className="alert error" role="alert">Личный ящик. Рабочий сценарий — корпоративный домен организации; личный подходит только как тестовый случай.</div>}
 
-   {/* Consent is offered only where it can actually be completed — that is what route 'oauth'
-       means. Where the platform has no application registered, this whole way in does not exist
-       for the person in front of the screen, so it is not mentioned: not as a button, not as a
-       problem to report, and not as something for them to configure. They are shown the route
-       that works instead. Registering the application is the platform's own task, and it is done
-       on the Accounts screen, where it belongs.
-
-       Once the advanced route has been opened by hand, the offer steps out of the way rather
-       than sitting above the form being filled in. */}
    {detection.route==='oauth'&&!expert&&<div className="button-stack">
     <button disabled={busy} onClick={()=>run(async()=>{const r=await api('/mailboxes/oauth',{email:detection.email});
      window.open(r.url,'_blank','noopener');setModal('');setDetection(null);},'Завершите согласие в открывшейся вкладке, затем проверьте ящик')}>
      Подключить через {detection.provider==='google'?'Google':'Microsoft'}</button>
-    <span className="tiny muted">{detection.appOwner==='platform'?'Приложение Sendina — client id вводить не нужно.':'Используется приложение вашего аккаунта.'}</span></div>}
+    <span className="tiny muted">Приложение Sendina — никаких Client ID или Client Secret вводить не нужно.</span></div>}
+   {detection.route==='oauth-unconfigured'&&!expert&&<div className="alert error" role="alert">
+    Подключение {detection.provider==='google'?'Google':'Microsoft'} сейчас недоступно на стороне Sendina. {superadmin?'Настройте OAuth-приложение платформы на экране «Аккаунты».':'Обратитесь к администратору Sendina.'}
+   </div>}
 
-   {/* Connecting by password. It is the advanced route only where consent is available; where
-       it is not, it is simply the way this mailbox connects, and it opens ready to fill in
-       rather than hidden behind a link somebody has to think to press. */}
    {(()=>{
      const found=detection.settings;
      const smtp=found?.smtp??{host:'',port:465,secure:true};
      const imap=found?.imap??{host:'',port:993,secure:true};
-     if(detection.route==='oauth'&&!expert)return <button className="text-link" onClick={()=>setExpert(true)}>
-       Расширенный способ подключения (SMTP и IMAP по паролю приложения)<ChevronRight size={13}/></button>;
+     const apiProvider=['google','microsoft'].includes(detection.provider);
+     if(apiProvider&&!expert)return <button className="text-link" onClick={()=>setExpert(true)}>
+       Custom SMTP/IMAP (расширенно)<ChevronRight size={13}/></button>;
      return <form onSubmit={e=>{e.preventDefault();const f=new FormData(e.currentTarget);
        const asServer=(prefix:string)=>({host:String(f.get(prefix+'Host')),port:Number(f.get(prefix+'Port')),secure:f.get(prefix+'Secure')==='on'});
        run(async()=>{
@@ -621,19 +603,19 @@ function App(){
          const r=await api('/mailboxes/connect',{email:detection.email,
           smtp:asServer('smtp'),imap:asServer('imap'),user:String(f.get('user')||detection.email),
           pass:f.get('pass'),source:found?.source??'manual',label:found?.label??'Указано вручную'});
-         // The mailbox now exists either way, so the form is finished with regardless of the
-         // outcome of the four checks; the result is reported on the mail screen, not in here.
          setCheck({email:detection.email,...r});
          setNotice(r.ready?`Ящик ${detection.email} подключён и проверен.`
           :`Ящик ${detection.email} создан, но проверка не прошла: ${r.failedStepLabel||'—'} (${r.reason||'FAILED'}).`);
         }finally{setModal('');setDetection(null);setAdvanced(false);setExpert(false);}
        });}}>
+      {apiProvider&&<div className="info-banner compact"><Info size={18}/><div><b>Отдельный custom-режим</b>
+       <p className="tiny">Этот путь использует SMTP/IMAP и может не работать на хостинге с закрытыми почтовыми портами. Для Google/Microsoft стандартный путь выше — OAuth через HTTPS API.</p></div></div>}
       {found&&!advanced
        ?<div className="info-banner compact"><Check size={18}/><div><b>Настройки определены автоматически</b>
           <p className="tiny" data-user-content>{found.label}</p>
           <p className="tiny muted">SMTP {smtp.host}:{smtp.port} · IMAP {imap.host}:{imap.port}</p>
           <button type="button" className="text-link" onClick={()=>setAdvanced(true)}>Изменить вручную</button></div></div>
-       :<><p className="muted">Расширенная настройка. Эти параметры есть в панели вашего почтового провайдера.</p>
+       :<><p className="muted">Расширенная настройка custom SMTP/IMAP. Эти параметры есть в панели вашего почтового провайдера.</p>
          <div className="form-row"><label>SMTP host<input name="smtpHost" required defaultValue={smtp.host}/></label>
           <label>SMTP порт<input name="smtpPort" type="number" required defaultValue={smtp.port}/></label></div>
          <label className="switch"><input name="smtpSecure" type="checkbox" defaultChecked={smtp.secure}/>Шифрование TLS для SMTP</label>
@@ -646,8 +628,8 @@ function App(){
         {imap.secure&&<input type="hidden" name="imapSecure" value="on"/>}</>}
       <label>Пользователь<input name="user" defaultValue={detection.email}/></label>
       <label>Пароль или пароль приложения<input name="pass" type="password" required/></label>
-      <p className="tiny muted">Пароль шифруется на сервере и никогда не возвращается в интерфейс. После подключения Sendina проверит вход, отправку, приём и прочитает тестовое письмо обратно.</p>
-      <button disabled={busy}>Подключить и проверить</button></form>;
+      <p className="tiny muted">Пароль шифруется на сервере и никогда не возвращается в интерфейс. Этот режим существует только для совместимости с custom SMTP/IMAP.</p>
+      <button disabled={busy}>Подключить custom SMTP/IMAP</button></form>;
     })()}
    <button className="text-link" onClick={()=>{setDetection(null);setAdvanced(false);setExpert(false);}}>Другой адрес</button></>)}
 
@@ -670,8 +652,6 @@ function App(){
    <button className="secondary" onClick={()=>setModal('contacts')}>Импорт JSON</button>
   </div>
 
-  {/* Sending, kept apart from everything above it, because it is the only action on this screen
-      that a stranger can see the result of. The rehearsal comes first and is the safe one. */}
   {(()=>{const drafts=state.messages.filter(m=>m.campaignId===c.id&&m.status==='draft').length;
    const sent=state.messages.filter(m=>m.campaignId===c.id&&m.status==='sent').length;
    return <div className="send-block">
@@ -695,18 +675,17 @@ function App(){
       <Send size={16}/>Отправить по-настоящему</button></div>
    </div>;})()}</>;})()}
 
- {/* What a run actually did, message by message. A refusal names the rule that produced it. */}
  {modal==='sendresult'&&sendRun&&<>
   <div className={'info-banner compact '+(sendRun.dryRun?'':'sent')}><Info size={20}/><div>
    <b>{sendRun.dryRun?'Репетиция: ничего не отправлено':`Отправлено писем: ${sendRun.sent}`}</b>
    <p className="tiny">Отправитель: <span data-user-content>{sendRun.sender?.email}</span></p>
-   <p className="tiny">В очереди: {sendRun.queued} · Заблокировано правилами: {sendRun.blocked} · Ошибок: {sendRun.failed}</p>
+   <p className="tiny">В очереди: {sendRun.queued} · Заблокировано правилами: {sendRun.blocked} · Ошибок: {sendRun.failed}{sendRun.unknown?` · Уточняется: ${sendRun.unknown}`:''}</p>
    {sendRun.allowlist&&<p className="tiny">Разрешённые адреса: <span data-user-content>{sendRun.allowlist.join(', ')}</span></p>}</div></div>
   <ol className="send-results">{sendRun.results.map((r:any)=>
    <li key={r.messageId} className={r.status}>
     <span className="send-address" data-user-content>{r.email}</span>
-    <span className={'badge '+(r.status==='sent'?'active':r.status==='failed'?'paused':'draft')}>
-     {r.status==='sent'?(sendRun.dryRun?'Прошло бы':'Отправлено'):r.status==='failed'?'Ошибка':'Заблокировано'}</span>
+    <span className={'badge '+(r.status==='sent'?'active':r.status==='failed'||r.status==='unknown'?'paused':'draft')}>
+     {r.status==='sent'?(sendRun.dryRun?'Прошло бы':'Отправлено'):r.status==='failed'?'Ошибка':r.status==='unknown'?'Уточняется':'Заблокировано'}</span>
     <span className="tiny muted">{reasons[r.reason]??r.reason}</span>
     <span className="tiny muted" data-user-content>{r.detail}</span></li>)}</ol>
   {!sendRun.results.length&&<div className="empty">Ни одного письма в очереди.</div>}</>}
