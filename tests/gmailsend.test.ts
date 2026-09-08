@@ -48,3 +48,31 @@ test('legacy plain-text caller remains source-compatible',async()=>{
   assert.match(result.messageId,/^<sendina-[a-f0-9]{32}@example\.com>$/);
  }finally{delete process.env.MAIL_PROVIDER_BASE_URL;server.close();}
 });
+
+test('Microsoft sendMail receives base64 MIME with a stable RFC Message-ID',async()=>{
+ let graphBody='',graphType='';
+ const server=createServer((req,res)=>{let body='';req.on('data',d=>body+=d);req.on('end',()=>{
+  if(req.url?.endsWith('/oauth2/v2.0/token')){
+   res.setHeader('content-type','application/json');return res.end(JSON.stringify({access_token:'access'}));
+  }
+  if(req.url?.includes('/v1.0/me/sendMail')){
+   graphBody=body;graphType=String(req.headers['content-type']??'');res.statusCode=202;return res.end();
+  }
+  res.statusCode=404;res.end('{}');
+ });});
+ await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
+ const address=server.address() as any;process.env.MAIL_PROVIDER_BASE_URL=`http://127.0.0.1:${address.port}`;
+ try{
+  const result=await sendMessage({kind:'oauth',provider:'microsoft',email:'sales@company.example',refreshToken:'r'},
+   'buyer@example.net','Re: Demo','Plain body',apps,{html:'<p>HTML body</p>',replyTo:'team@company.example',
+    messageId:'<sendina-fixed@company.example>',inReplyTo:'<customer-1@example.net>',references:['<customer-1@example.net>']});
+  assert.equal(graphType,'text/plain');
+  const mime=Buffer.from(graphBody,'base64').toString('utf8');
+  assert.match(mime,/multipart\/alternative/);
+  assert.match(mime,/Message-ID: <sendina-fixed@company\.example>/);
+  assert.match(mime,/Reply-To: team@company\.example/);
+  assert.match(mime,/In-Reply-To: <customer-1@example\.net>/);
+  assert.match(mime,/References: <customer-1@example\.net>/);
+  assert.deepEqual(result,{id:'',threadId:'',messageId:'<sendina-fixed@company.example>',via:'Microsoft Graph'});
+ }finally{delete process.env.MAIL_PROVIDER_BASE_URL;server.close();}
+});
