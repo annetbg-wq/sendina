@@ -1,7 +1,10 @@
 export type ProviderFailureClass='REAUTH_REQUIRED'|'RATE_LIMITED'|'RETRYABLE'|'PERMANENT'|'UNKNOWN';
 export type StoredProviderFailure={class?:ProviderFailureClass;code?:string;at?:string};
 
-const timestamp=(value:any)=>{const n=Date.parse(String(value?.at??''));return Number.isFinite(n)?n:0;};
+const timestamp=(value:any)=>{
+ const raw=typeof value==='string'||typeof value==='number'?value:value?.at;
+ const n=Date.parse(String(raw??''));return Number.isFinite(n)?n:0;
+};
 
 /** A provider failure normally stays active until every mailbox proof has succeeded after it.
  * REAUTH_REQUIRED is different: a successful OAuth reconnect creates a newer credential generation,
