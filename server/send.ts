@@ -8,6 +8,7 @@ import {duplicateEmails} from './duplicates';
 import {senderCredentials,sendThrough} from './mailboxes';
 import {ProviderRequestError} from './providerrequest';
 import {normalizeProviderError,type ProviderError} from './providererrors';
+import {deterministicMessageId} from './mime';
 
 /** Real sending.
 
@@ -126,6 +127,10 @@ export function reserve(s:State,campaignId:string,messageId:string,list:string[]
  message.status='sending';
  message.deliveryState='SENDING';
  message.sentThrough=sender.mailbox.email;
+ // This identity must exist before the network request: if the response is lost after provider
+ // acceptance, reconciliation still has a stable key and does not need to risk a second send.
+ message.rfcMessageId=deterministicMessageId({from:sender.mailbox.email,to:contact.email,
+  subject:message.subject,text:message.text});
  return {ok:true,to:contact.email,subject:message.subject,text:message.text,domainId:sender.domain.id};
 }
 
