@@ -1,7 +1,8 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {reserve,settle,senderMailbox,allowanceOf,today} from '../server/send';
+import {reserve,settle,senderMailbox,allowanceOf,today,classifySendFailure} from '../server/send';
 import {seed,type State} from '../server/seed';
+import {ProviderRequestError} from '../server/providerrequest';
 
 /** The rules that decide whether a message may leave, exercised directly against the function the
     send path actually calls. These are unit tests on purpose: the guarantee being asserted is that
@@ -36,13 +37,12 @@ test('a message leaves only when every rule allows it, and reserves its quota wh
  const decision=go(s);
  assert.equal(decision.ok,true,decision.ok?'':decision.reason);
  if(!decision.ok)return;
- // What is sent is what the draft holds. Sending composes nothing of its own.
  assert.equal(decision.to,'buyer@customer.example');
  assert.equal(decision.subject,'Тест');
  assert.equal(decision.text,'Текст письма');
- // The allowance is spent before the network call, not after it.
  assert.equal(s.domains[0].used,1,'the quota is reserved, so a second run cannot spend it again');
  assert.equal(s.messages[0].status,'sending','and the draft is marked in flight');
+ assert.equal((s.messages[0] as any).deliveryState,'SENDING');
  assert.equal(s.messages[0].sentThrough,'out@sender.example');
 });
 
@@ -69,9 +69,7 @@ test('every recipient rule is re-applied at the moment of sending',()=>{
   ['MANUAL_APPROVAL_REQUIRED',s=>{s.campaigns[0].control='manual';}],
   ['FIRST_BATCH_APPROVAL_REQUIRED',s=>{s.campaigns[0].control='confirm';}],
   ['DOMAIN_LIMIT',s=>{s.domains[0].used=5;}],
-  // A mailbox that has not proved all four checks is not a sender, whatever else is in order.
   ['SENDER_NOT_READY',s=>{s.domains[0].mailboxes[0].incoming={status:'none',at:null,detail:''};}],
-  // Neither is one whose domain records were never checked.
   ['SENDER_NOT_READY',s=>{s.domains[0].dns={spf:false,dkim:false,dmarc:false,checkedAt:null};}]
  ];
  for(const [reason,break_] of cases){
@@ -103,8 +101,6 @@ test('during a controlled test nothing reaches an address that was not named in 
 
  const permitted=go(ready(),['buyer@customer.example','other@ours.example']);
  assert.equal(permitted.ok,true,'a named address goes through as usual');
-
- // An empty list is not a fence that blocks everything, it is no fence at all.
  assert.equal(go(ready(),[]).ok,true);
 });
 
@@ -113,34 +109,56 @@ test('the allow list is applied after the rules, never instead of them',()=>{
  s.stopped=true;
  const decision=go(s,['buyer@customer.example']);
  assert.equal(decision.ok,false);
- // Being on the list must never be able to rescue a message the rules refused.
  if(!decision.ok)assert.equal(decision.reason,'EMERGENCY_STOP');
 });
 
-test('a send that failed hands its allowance back and leaves a draft to retry',()=>{
+test('a provider-confirmed failed send returns allowance and stays safe to retry',()=>{
  const s=ready();
  const decision=go(s);
  assert.equal(decision.ok,true);
  if(!decision.ok)return;
  assert.equal(s.domains[0].used,1);
 
- settle(s,'c1','m1','d1',{ok:false,detail:'SMTP отказал'});
- assert.equal(s.domains[0].used,0,'a message that never left cannot have spent a day of quota');
- assert.equal(s.messages[0].status,'draft','and can be sent again once the mailbox is fixed');
- assert.equal(s.messages[0].sendDetail,'SMTP отказал','with the reason kept');
+ settle(s,'c1','m1','d1',{outcome:'failed',detail:'Provider rejected',providerError:{
+  class:'PERMANENT',code:'403',status:403,retryAfterMs:null,detail:'Provider rejected'}});
+ assert.equal(s.domains[0].used,0,'a proven reject cannot have spent a day of quota');
+ assert.equal(s.messages[0].status,'draft','a proven reject is safe to retry explicitly');
+ assert.equal((s.messages[0] as any).deliveryState,'FAILED');
+ assert.equal(s.messages[0].sendDetail,'Provider rejected');
  assert.equal(s.campaigns[0].sent,0,'nothing counts as sent');
+ assert.equal((s.domains[0].mailboxes[0] as any).lastProviderError.class,'PERMANENT');
+});
+
+test('an ambiguous send becomes UNKNOWN, keeps quota and cannot be resent',()=>{
+ const s=ready();
+ const decision=go(s);
+ assert.equal(decision.ok,true);
+ if(!decision.ok)return;
+ const failure=classifySendFailure(new ProviderRequestError({
+  class:'RETRYABLE',code:'503',status:503,retryAfterMs:null,detail:'upstream uncertain'}));
+ assert.equal(failure.outcome,'unknown');
+ settle(s,'c1','m1','d1',failure);
+ assert.equal(s.messages[0].status,'unknown');
+ assert.equal((s.messages[0] as any).deliveryState,'UNKNOWN');
+ assert.equal(s.domains[0].used,1,'uncertain delivery keeps the conservative quota reservation');
+ const again=go(s);
+ assert.equal(again.ok,false);
+ if(!again.ok)assert.equal(again.reason,'SEND_OUTCOME_UNKNOWN');
 });
 
 test('a send that succeeded is recorded once, and the quota stays spent',()=>{
  const s=ready();
  const decision=go(s);
  assert.equal(decision.ok,true);
- settle(s,'c1','m1','d1',{ok:true,detail:'Отправлено через SMTP'});
+ settle(s,'c1','m1','d1',{outcome:'sent',detail:'Отправлено через SMTP',providerId:'p1',providerThreadId:'t1',rfcMessageId:'<m1@example>'});
  assert.equal(s.messages[0].status,'sent');
+ assert.equal((s.messages[0] as any).deliveryState,'SENT');
  assert.ok(s.messages[0].sentAt,'the time it left is kept');
+ assert.equal((s.messages[0] as any).providerMessageId,'p1');
+ assert.equal((s.messages[0] as any).providerThreadId,'t1');
+ assert.equal((s.messages[0] as any).rfcMessageId,'<m1@example>');
  assert.equal(s.campaigns[0].sent,1);
  assert.equal(s.domains[0].used,1);
- // The same message can never be sent twice, however many times the run is repeated.
  const again=go(s);
  assert.equal(again.ok,false);
  if(!again.ok)assert.equal(again.reason,'ALREADY_SENT');
@@ -150,22 +168,18 @@ test('a send that succeeded is recorded once, and the quota stays spent',()=>{
 test('the quota is a day at a time, and a new day starts it over',()=>{
  const spent={id:'d1',name:'x.example',limit:5,used:5,usedOn:today()};
  assert.deepEqual(allowanceOf(spent),{used:5,limit:5});
- // Without the reset, the first day a domain filled its allowance would be its last.
  const yesterday={id:'d1',name:'x.example',limit:5,used:5,usedOn:'2020-01-01'};
  assert.deepEqual(allowanceOf(yesterday),{used:0,limit:5});
  assert.equal(yesterday.usedOn,today());
- // A domain nobody has given an allowance to sends nothing, rather than sending without one.
  const untouched={id:'d1',name:'x.example',limit:0,used:0,usedOn:null};
  assert.deepEqual(allowanceOf(untouched),{used:0,limit:0});
 });
 
 test('the sending mailbox is chosen by readiness, not by being first in the list',()=>{
  const s=ready();
- // An unproven mailbox on a ready domain is skipped in favour of the one that proved itself.
  s.domains[0].mailboxes.unshift({email:'half@sender.example',provider:'smtp',connection:'smtp',
   auth:{...ok},testSend:{status:'failed',at:null,detail:''},imap:{...ok},incoming:{...ok}} as any);
  assert.equal(senderMailbox(s)?.mailbox.email,'out@sender.example');
- // With the emergency stop on, there is no sender at all.
  s.stopped=true;
  assert.equal(senderMailbox(s),null);
 });
