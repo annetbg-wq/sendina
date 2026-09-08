@@ -9,6 +9,7 @@ Object.assign(dictionary,{
  'Google и Microsoft работают через HTTPS API':'Google and Microsoft work through HTTPS APIs',
  'Подключите рабочий адрес через Google или Microsoft. SMTP/IMAP для них не требуются; ручной SMTP/IMAP остаётся отдельным расширенным режимом для других провайдеров.':'Connect a work address through Google or Microsoft. They do not require SMTP/IMAP; manual SMTP/IMAP remains a separate advanced mode for other providers.',
  'Не подключён':'Disconnected',
+ 'Подключите почтовый ящик.':'Connect a mailbox.',
  'Подключается':'Connecting',
  'Подключение создано, требуется проверка.':'The connection exists and needs verification.',
  'Отправка и приём через почтового провайдера доступны.':'Sending and receiving through the mail provider are available.',
