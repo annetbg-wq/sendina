@@ -39,7 +39,7 @@ const providerUrl=(url:string)=>{const base=process.env.MAIL_PROVIDER_BASE_URL;
 
 export type MailApps={google:{clientId:string;clientSecret:string};microsoft:{clientId:string;clientSecret:string;tenant:string}};
 type OauthConfig={authorize:string;token:string;scope:string;clientId:string;clientSecret:string;extra:Record<string,string>};
-/** The OAuth application belongs to the account, so each workspace connects under its own client. */
+/** The OAuth applications are Sendina platform infrastructure. */
 export function oauthConfig(provider:Provider,apps:MailApps):OauthConfig|null{
  if(provider==='google'){
   const {clientId,clientSecret}=apps.google;
@@ -63,7 +63,7 @@ export const oauthReady=(provider:Provider,apps:MailApps)=>Boolean(oauthConfig(p
 
 export async function exchangeCode(provider:Provider,code:string,redirectUri:string,apps:MailApps){
  const config=oauthConfig(provider,apps);
- if(!config)throw Error('OAuth для этого провайдера не настроен в аккаунте.');
+ if(!config)throw Error('OAuth для этого провайдера не настроен платформой Sendina.');
  const r=await fetch(config.token,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
   body:new URLSearchParams({grant_type:'authorization_code',code,redirect_uri:redirectUri,
    client_id:config.clientId,client_secret:config.clientSecret})});
@@ -75,7 +75,7 @@ export async function exchangeCode(provider:Provider,code:string,redirectUri:str
 
 async function accessToken(provider:Provider,refreshToken:string,apps:MailApps){
  const config=oauthConfig(provider,apps);
- if(!config)throw Error('OAuth для этого провайдера не настроен в аккаунте.');
+ if(!config)throw Error('OAuth для этого провайдера не настроен платформой Sendina.');
  const r=await fetch(config.token,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
   body:new URLSearchParams({grant_type:'refresh_token',refresh_token:refreshToken,
    client_id:config.clientId,client_secret:config.clientSecret})});
@@ -174,7 +174,8 @@ export async function readIncoming(secret:any,apps:MailApps,limit=25):Promise<In
     subject:headers.subject??'',text:gmailText(message?.payload),
     messageId:headers['message-id']??'',inReplyTo:headers['in-reply-to']??'',
     references:(headers.references??'').split(/\s+/).filter(Boolean),
-    at:new Date(Number(message?.internalDate??Date.now())).toISOString()});
+    at:new Date(Number(message?.internalDate??Date.now())).toISOString(),
+    providerId:String(message?.id??id),threadId:String(message?.threadId??'')});
   }
   return out;
  }
@@ -184,7 +185,8 @@ export async function readIncoming(secret:any,apps:MailApps,limit=25):Promise<In
   from:String(m?.from?.emailAddress?.address??'').toLowerCase(),
   subject:String(m?.subject??''),text:String(m?.body?.content??m?.bodyPreview??''),
   messageId:String(m?.internetMessageId??''),inReplyTo:'',references:[],
-  at:String(m?.receivedDateTime??new Date().toISOString())}));
+  at:String(m?.receivedDateTime??new Date().toISOString()),
+  providerId:String(m?.id??''),threadId:String(m?.conversationId??'')}));
 }
 
 /** Gmail delivers the body inside a MIME tree; the plain part is the one worth reading. */
