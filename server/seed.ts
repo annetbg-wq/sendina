@@ -107,12 +107,16 @@ export function normalize(s:any):State{
     m.at??=null;
     // What the send path records: which mailbox carried it and what the server said.
     m.sentThrough??='';m.sendDetail??='';
+    m.providerMessageId??='';m.providerThreadId??='';m.rfcMessageId??='';
+    m.deliveryState??=m.status==='sent'?'SENT':m.status==='unknown'?'UNKNOWN':m.status==='sending'?'SENDING':'QUEUED';
     // A restart cannot prove whether an in-flight provider request was accepted. Retrying would
     // risk a duplicate, so preserve that uncertainty explicitly until reconciliation proves the outcome.
     if(m.status==='sending'){
       m.status='unknown';
+      m.deliveryState='UNKNOWN';
       m.sendDetail=m.sendDetail||'Результат отправки неизвестен после перезапуска. Автоматический повтор запрещён до сверки с провайдером.';
     }
+    if(m.status==='unknown')m.deliveryState='UNKNOWN';
   }
   for(const d of s.domains){
     d.dns??=noDns();

@@ -6,6 +6,9 @@ import {policy,type Decision} from './policy';
 import {domainReadiness,mailboxReadiness} from './readiness';
 import {duplicateEmails} from './duplicates';
 import {senderCredentials,sendThrough} from './mailboxes';
+import {ProviderRequestError} from './providerrequest';
+import {normalizeProviderError,type ProviderError} from './providererrors';
+import {deterministicMessageId} from './mime';
 
 /** Real sending.
 
@@ -23,10 +26,9 @@ import {senderCredentials,sendThrough} from './mailboxes';
        about a minute ago. An emergency stop, a reply that just arrived, an exhausted quota or a
        paused campaign therefore takes effect on the very next message rather than after the run.
 
-    3. The quota is reserved before the network call and handed back if the send fails, so a
-       refusal cannot leave a domain having spent an allowance it never used — and two runs at
-       once cannot both spend the last one, because reserving happens under the same lock that
-       serialises every other change to the workspace. */
+    3. The quota is reserved before the network call and handed back if the provider proves the
+       send failed. An ambiguous provider outcome keeps the reservation because the message may
+       already have left and must not be silently sent again. */
 
 /** Sending is off unless a deployment says otherwise, because turning it on is not reversible for
     the people who receive the mail. The allow list is the controlled-test instrument: while it has
@@ -68,10 +70,12 @@ export const sendSchema=z.object({
  dryRun:z.boolean().default(false)
 });
 
-type Outcome={contactId:string;messageId:string;email:string;status:'sent'|'blocked'|'failed';
+type Outcome={contactId:string;messageId:string;email:string;status:'sent'|'blocked'|'failed'|'unknown';
  reason:string;detail:string;at:string};
 type Reserved={ok:true;to:string;subject:string;text:string;domainId:string}
  |{ok:false;reason:string;detail:string};
+export type SendSettlement={outcome:'sent'|'failed'|'unknown';detail:string;providerError?:ProviderError;
+ providerId?:string;providerThreadId?:string;rfcMessageId?:string};
 
 /** Re-decides one message and, if it may go, reserves its place in the quota.
 
@@ -85,6 +89,7 @@ export function reserve(s:State,campaignId:string,messageId:string,list:string[]
  if(s.stopped)return stop('EMERGENCY_STOP','Аварийная остановка включена.');
  const message=s.messages.find(m=>m.id===messageId);
  if(!message)return stop('MESSAGE_MISSING','Черновик письма не найден.');
+ if(message.status==='unknown')return stop('SEND_OUTCOME_UNKNOWN','Результат предыдущей отправки неизвестен. Сначала требуется сверка с почтовым провайдером.');
  if(message.status!=='draft')return stop('ALREADY_SENT',`Письмо уже в состоянии «${message.status}».`);
  const campaign=s.campaigns.find(c=>c.id===campaignId);
  if(!campaign)return stop('CAMPAIGN_MISSING','Кампания не найдена.');
@@ -120,27 +125,60 @@ export function reserve(s:State,campaignId:string,messageId:string,list:string[]
  sender.domain.used=allowance.used+1;
  sender.domain.usedOn=today();
  message.status='sending';
+ message.deliveryState='SENDING';
  message.sentThrough=sender.mailbox.email;
+ // This identity must exist before the network request: if the response is lost after provider
+ // acceptance, reconciliation still has a stable key and does not need to risk a second send.
+ message.rfcMessageId=deterministicMessageId({from:sender.mailbox.email,to:contact.email,
+  subject:message.subject,text:message.text});
  return {ok:true,to:contact.email,subject:message.subject,text:message.text,domainId:sender.domain.id};
 }
 
-/** Records what the network said. A failure hands the reserved allowance back, because a message
-    that never left cannot have consumed a day's quota. */
-export function settle(s:State,campaignId:string,messageId:string,domainId:string,
- result:{ok:boolean;detail:string}){
+const mailboxOf=(s:State,email:string)=>{
+ for(const domain of s.domains)for(const mailbox of domain.mailboxes)
+  if(mailbox.email===email)return mailbox as any;
+ return null;
+};
+
+/** Converts a transport exception into the only distinction that matters for idempotency:
+    either the provider definitely rejected the send, or acceptance is still possible. */
+export function classifySendFailure(e:any):Pick<SendSettlement,'outcome'|'detail'|'providerError'>{
+ const providerError=e instanceof ProviderRequestError?e.provider:normalizeProviderError(e);
+ const ambiguous=providerError.class==='RETRYABLE'||providerError.class==='UNKNOWN';
+ return {outcome:ambiguous?'unknown':'failed',detail:providerError.detail||String(e?.message??e),providerError};
+}
+
+/** Records what the network said. A definite failure hands the reserved allowance back. UNKNOWN
+    deliberately keeps the reservation and cannot become a draft until reconciliation proves that
+    the provider did not accept the message. */
+export function settle(s:State,campaignId:string,messageId:string,domainId:string,result:SendSettlement){
  const message=s.messages.find(m=>m.id===messageId);
  if(!message)return;
- if(result.ok){
+ const mailbox=mailboxOf(s,String(message.sentThrough??''));
+ const at=new Date().toISOString();
+ if(result.outcome==='sent'){
   message.status='sent';
-  message.sentAt=new Date().toISOString();
+  message.deliveryState='SENT';
+  message.sentAt=at;
   message.sendDetail=result.detail.slice(0,300);
+  message.providerMessageId=result.providerId??'';
+  message.providerThreadId=result.providerThreadId??'';
+  message.rfcMessageId=result.rfcMessageId??message.rfcMessageId??'';
+  if(mailbox)mailbox.lastProviderError=null;
   const campaign=s.campaigns.find(c=>c.id===campaignId);
   if(campaign)campaign.sent=Number(campaign.sent??0)+1;
   return;
  }
- // Back to a draft, so a fixed mailbox can retry it without preparing the letter again.
- message.status='draft';
  message.sendDetail=result.detail.slice(0,300);
+ if(result.providerError&&mailbox)mailbox.lastProviderError={...result.providerError,at};
+ if(result.outcome==='unknown'){
+  message.status='unknown';
+  message.deliveryState='UNKNOWN';
+  message.rfcMessageId=result.rfcMessageId??message.rfcMessageId??'';
+  return;
+ }
+ message.status='draft';
+ message.deliveryState='FAILED';
  const domain=s.domains.find((d:any)=>d.id===domainId);
  if(domain)domain.used=Math.max(0,Number(domain.used??0)-1);
 }
@@ -198,32 +236,36 @@ export async function sendCampaign(ctx:Ctx,input:unknown){
     if(stopsTheRun(reserved.reason))break;
     continue;
    }
-   let result:{ok:boolean;detail:string};
+   let result:SendSettlement;
    try{
     const sent=await sendThrough(credentials,reserved.to,reserved.subject,reserved.text);
-    result={ok:true,detail:`Отправлено через ${sent.via}`};
-   }catch(e:any){result={ok:false,detail:String(e?.message??e)};}
+    result={outcome:'sent',detail:`Отправлено через ${sent.via}`,
+     providerId:sent.id,providerThreadId:sent.threadId,rfcMessageId:sent.messageId};
+   }catch(e:any){result=classifySendFailure(e);}
    await change(ctx.accountId,s=>settle(s,id,draft.id,reserved.domainId,result));
    outcomes.push({contactId:draft.contactId,messageId:draft.id,email:draft.email,
-    status:result.ok?'sent':'failed',reason:result.ok?'SENT':'SEND_FAILED',detail:result.detail,at});
+    status:result.outcome,reason:result.outcome==='sent'?'SENT':result.outcome==='unknown'?'SEND_UNKNOWN':'SEND_FAILED',
+    detail:result.detail,at});
+   // Once a provider outcome is ambiguous, do not create any more uncertainty in the same run.
+   if(result.outcome==='unknown')break;
   }
  }
 
  const count=(status:Outcome['status'])=>outcomes.filter(o=>o.status===status).length;
- const sent=count('sent'),blocked=count('blocked'),failed=count('failed');
+ const sent=count('sent'),blocked=count('blocked'),failed=count('failed'),unknown=count('unknown');
  if(!dryRun)await change(ctx.accountId,s=>{
-  audit(s,`Отправка «${campaign.name}» через ${sender.mailbox.email}: отправлено ${sent}, заблокировано правилами ${blocked}, ошибок ${failed}.`);
+  audit(s,`Отправка «${campaign.name}» через ${sender.mailbox.email}: отправлено ${sent}, заблокировано правилами ${blocked}, ошибок ${failed}, неизвестный результат ${unknown}.`);
  });
 
  return {campaignId:id,dryRun,
   sender:{email:sender.mailbox.email,domain:sender.domain.name},
   /** Named back, so a controlled test can see the fence it is running inside. */
   allowlist:config.allowlist.length?config.allowlist:null,
-  queued:queue.length,sent,blocked,failed,results:outcomes};
+  queued:queue.length,sent,blocked,failed,unknown,results:outcomes};
 }
 
 /** A refusal that applies to everything behind it too, so the run ends rather than working
     through the rest of the queue collecting the same answer. */
 const stopsTheRun=(reason:string)=>
- ['EMERGENCY_STOP','DOMAIN_LIMIT','CAMPAIGN_PAUSED','SENDER_NOT_READY',
+ ['EMERGENCY_STOP','DOMAIN_LIMIT','CAMPAIGN_PAUSED','SENDER_NOT_READY','SEND_OUTCOME_UNKNOWN',
   'MANUAL_APPROVAL_REQUIRED','FIRST_BATCH_APPROVAL_REQUIRED'].includes(reason);
