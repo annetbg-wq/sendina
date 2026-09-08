@@ -19,6 +19,12 @@ test('mail OAuth state is durable-shaped, single-use and normalized',async()=>{
  assert.equal(await consumeMailOauthState(state),null,'the same callback state cannot be replayed');
 });
 
+test('two concurrent callbacks cannot consume the same OAuth state',async()=>{
+ const state=await issueMailOauthState({accountId:'acc-race',email:'race@example.com',provider:'google'});
+ const [a,b]=await Promise.all([consumeMailOauthState(state),consumeMailOauthState(state)]);
+ assert.equal([a,b].filter(Boolean).length,1,'exactly one callback may obtain the account binding');
+});
+
 test('expired OAuth state is rejected and consumed',async()=>{
  const state=await issueMailOauthState({accountId:'acc-2',email:'x@example.com',provider:'microsoft'},-1);
  assert.equal(await consumeMailOauthState(state),null);
