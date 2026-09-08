@@ -1,17 +1,24 @@
 import {listAccounts,type Account} from './accounts';
 import type {Ctx} from './context';
+import {reconcileUnknownDelivery} from './deliveryrecovery';
 import {mailboxOperations} from './mailboxes';
+import {applyMailboxProviderFailure} from './mailboxproviderfailure';
 import {currentProviderFailure} from './providerhealth';
 import {ProviderRequestError} from './providerrequest';
-import {change} from './store';
-import {applyMailboxProviderFailure} from './mailboxproviderfailure';
+import {change,read} from './store';
 
-export type MailRecoverySummary={accounts:number;mailboxes:number;synced:number;skipped:number;errors:number};
+export type MailRecoverySummary={
+ accounts:number;mailboxes:number;synced:number;skipped:number;errors:number;
+ unknownChecked:number;unknownResolved:number;
+};
 
+type UnknownDelivery={id:string;senderEmail:string};
 type RecoveryDeps={
  listAccounts:()=>Promise<Account[]>;
  status:(ctx:Ctx)=>Promise<any>;
  sync:(ctx:Ctx,input:{email:string;limit:number})=>Promise<any>;
+ listUnknown:(ctx:Ctx)=>Promise<UnknownDelivery[]>;
+ reconcile:(ctx:Ctx,input:{id:string})=>Promise<any>;
  recordProviderFailure:(ctx:Ctx,email:string,error:ProviderRequestError)=>Promise<void>;
 };
 
@@ -19,17 +26,35 @@ const productionDeps:RecoveryDeps={
  listAccounts,
  status:ctx=>mailboxOperations.status(ctx),
  sync:(ctx,input)=>mailboxOperations.syncReplies(ctx,input),
+ listUnknown:async ctx=>{
+  const s=await read(ctx.accountId) as any;
+  /** Provider evidence reconciliation is implemented only for Gmail/Graph. A custom SMTP UNKNOWN
+   * remains visible for manual investigation rather than being hammered forever by a worker that
+   * can never prove it. */
+  const oauth=new Map<string,any>();
+  for(const domain of s.domains??[])for(const mailbox of domain.mailboxes??[])
+   if(mailbox.connection==='oauth'&&['google','microsoft'].includes(mailbox.provider))
+    oauth.set(String(mailbox.email).toLowerCase(),mailbox);
+  return (s.messages??[]).filter((message:any)=>message.status==='unknown'&&message.deliveryState==='UNKNOWN')
+   .map((message:any)=>({id:String(message.id),senderEmail:String(message.sentThrough??'').toLowerCase()}))
+   .filter((item:UnknownDelivery)=>{
+    const mailbox=oauth.get(item.senderEmail);
+    const failure=mailbox?currentProviderFailure(mailbox):undefined;
+    return Boolean(mailbox)&&failure?.class!=='REAUTH_REQUIRED'&&failure?.class!=='PERMANENT';
+   }).slice(0,50);
+ },
+ reconcile:(ctx,input)=>reconcileUnknownDelivery(ctx,input),
  recordProviderFailure:async(ctx,email,error)=>{
   await change(ctx.accountId,s=>{applyMailboxProviderFailure(s,email,error);});
  }
 };
 
 /** One recovery pass across approved accounts. It deliberately does not require domain sending
- * readiness: receiving replies is useful even if DNS later becomes unhealthy. Disconnected,
- * revoked-token and permanent-error mailboxes are skipped until a person fixes them; temporary
- * provider failures remain eligible so the next pass is the recovery mechanism itself. */
+ * readiness: receiving replies and reconciling UNKNOWN delivery are useful even if DNS later
+ * becomes unhealthy. Disconnected, revoked-token and permanent-error mailboxes are skipped until
+ * a person fixes them; temporary provider failures remain eligible so a later pass can recover. */
 export async function recoverMailboxesOnce(deps:RecoveryDeps=productionDeps):Promise<MailRecoverySummary>{
- const summary:MailRecoverySummary={accounts:0,mailboxes:0,synced:0,skipped:0,errors:0};
+ const summary:MailRecoverySummary={accounts:0,mailboxes:0,synced:0,skipped:0,errors:0,unknownChecked:0,unknownResolved:0};
  const accounts=await deps.listAccounts();
  for(const account of accounts){
   if(account.status!=='approved'){summary.skipped++;continue;}
@@ -51,6 +76,20 @@ export async function recoverMailboxesOnce(deps:RecoveryDeps=productionDeps):Pro
     summary.errors++;
     if(error instanceof ProviderRequestError)
      try{await deps.recordProviderFailure(ctx,String(mailbox.email).toLowerCase(),error);}catch{/* the sync error remains authoritative */}
+   }
+  }
+
+  let unknown:UnknownDelivery[]=[];
+  try{unknown=await deps.listUnknown(ctx);}catch{summary.errors++;}
+  for(const item of unknown){
+   summary.unknownChecked++;
+   try{
+    const result=await deps.reconcile(ctx,{id:item.id});
+    if(result?.outcome==='sent'||result?.outcome==='already_resolved')summary.unknownResolved++;
+   }catch(error:any){
+    summary.errors++;
+    if(error instanceof ProviderRequestError&&item.senderEmail)
+     try{await deps.recordProviderFailure(ctx,item.senderEmail,error);}catch{/* the reconciliation error remains authoritative */}
    }
   }
  }
