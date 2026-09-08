@@ -23,9 +23,14 @@ export async function getAuth<T>(key:string):Promise<T|null>{
 /** Two writes at once used to share one temporary file, so the second rename could arrive after
     the first had already moved it away and fail with ENOENT — losing a session or a connector
     code under nothing heavier than a person clicking twice. Writes are queued, and each one
-    lands on a name of its own. */
+    lands on a name of its own.
+
+    `null` is the public removal value used by older callers. It now physically deletes the key
+    rather than leaving a JSON-null tombstone behind, so disconnecting a mailbox actually removes
+    its encrypted refresh token / password row from either storage backend. */
 let queue:Promise<unknown>=Promise.resolve();
 export async function setAuth(key:string,data:unknown){
+ if(data===null)return deleteAuth(key);
  await prepare();
  if(pool){await pool.query('INSERT INTO auth_store VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET data=$2',[key,JSON.stringify(data)]);return;}
  const job=queue.then(async()=>{
@@ -38,7 +43,8 @@ export async function setAuth(key:string,data:unknown){
  return job;
 }
 
-/** Remove one-time credentials/state instead of leaving tombstones that could be replayed. */
+/** Remove credentials/state instead of leaving tombstones that could be replayed or mistaken for
+    a still-present secret. */
 export async function deleteAuth(key:string){
  await prepare();
  if(pool){await pool.query('DELETE FROM auth_store WHERE key=$1',[key]);return;}
