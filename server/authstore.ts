@@ -37,3 +37,18 @@ export async function setAuth(key:string,data:unknown){
  queue=job.catch(()=>{});
  return job;
 }
+
+/** Remove one-time credentials/state instead of leaving tombstones that could be replayed. */
+export async function deleteAuth(key:string){
+ await prepare();
+ if(pool){await pool.query('DELETE FROM auth_store WHERE key=$1',[key]);return;}
+ const job=queue.then(async()=>{
+  const map=await readFileMap();
+  delete map[key];
+  const temp=join(dir,`auth.${randomUUID()}.tmp`);
+  await writeFile(temp,JSON.stringify(map,null,2));
+  await rename(temp,file);
+ });
+ queue=job.catch(()=>{});
+ return job;
+}
