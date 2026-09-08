@@ -12,6 +12,7 @@ import {platformSettings,resolveMailApps,appOwner} from './platform';
 import {sealFields,openFields} from './secrets';
 import {mailboxReadiness,domainReadiness} from './readiness';
 import {withTimeout,budget,limits,PhaseTimeout} from './timeout';
+import {issueMailOauthState,consumeMailOauthState} from './oauthstate';
 
 /** Credentials live in the auth store, never in the workspace state the UI can read. */
 const secretKey=(accountId:string,email:string)=>`mailbox:${accountId}:${email.toLowerCase()}`;
@@ -49,9 +50,6 @@ async function awaitMarker(secret:any,apps:MailApps,marker:string,allowedMs:numb
  if(last)throw last;
  return null;
 }
-
-type Pending={accountId:string;email:string;provider:Provider;expires:number};
-const pending=new Map<string,Pending>();
 
 export const mailboxSchemas={
  email:z.object({email:z.email()}),
@@ -183,9 +181,8 @@ export const mailboxOperations={
   const chosen=provider??detection.provider;
   if(chosen==='smtp')throw Error('Для этого домена OAuth недоступен. Используйте SMTP или укажите провайдера вручную.');
   const config=oauthConfig(chosen,await appsFor(ctx.accountId));
-  if(!config)throw Error(`OAuth для ${chosen} не настроен в аккаунте: заполните client id и secret в настройках.`);
-  const state=randomBytes(24).toString('base64url');
-  pending.set(state,{accountId:ctx.accountId,email:email.toLowerCase(),provider:chosen,expires:Date.now()+900000});
+  if(!config)throw Error(`OAuth для ${chosen} не настроен платформой Sendina.`);
+  const state=await issueMailOauthState({accountId:ctx.accountId,email,provider:chosen});
   const url=new URL(config.authorize);
   url.searchParams.set('client_id',config.clientId);
   url.searchParams.set('redirect_uri',redirectUri());
@@ -199,8 +196,8 @@ export const mailboxOperations={
 
  /** Reached from the provider redirect, which carries no session; the state links it to an account. */
  completeOauth:async(code:string,state:string)=>{
-  const entry=pending.get(state);pending.delete(state);
-  if(!entry||entry.expires<Date.now())throw Error('Ссылка подключения устарела. Начните заново.');
+  const entry=await consumeMailOauthState(state);
+  if(!entry)throw Error('Ссылка подключения устарела или уже использована. Начните заново.');
   const tokens=await exchangeCode(entry.provider,code,redirectUri(),await appsFor(entry.accountId));
   await putSecret(entry.accountId,entry.email,{kind:'oauth',provider:entry.provider,email:entry.email,
    refreshToken:tokens.refreshToken,scope:tokens.scope,at:new Date().toISOString()});
