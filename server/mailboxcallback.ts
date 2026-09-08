@@ -1,5 +1,6 @@
 import type {Express} from 'express';
 import {mailboxOperations} from './mailboxes';
+import {mountDeliveryRoutes} from './deliveryroutes';
 
 /** The provider redirects a browser here, so this page is reached without the workspace token. */
 const strings={
@@ -30,4 +31,5 @@ export function mountMailboxCallback(app:Express){
    res.type('html').send(page(lang,t.ok,`${result.email} · ${t.okLead}`,'',false));
   }catch(e:any){res.status(400).type('html').send(page(lang,t.fail,t.back,String(e.message).slice(0,300),true));}
  });
+ mountDeliveryRoutes(app);
 }
