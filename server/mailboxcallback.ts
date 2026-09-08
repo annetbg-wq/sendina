@@ -1,6 +1,7 @@
 import type {Express} from 'express';
 import {mailboxOperations} from './mailboxes';
 import {mountDeliveryRoutes} from './deliveryroutes';
+import {mountMailboxProviderFailureRecorder} from './mailboxproviderfailure';
 
 /** The provider redirects a browser here, so this page is reached without the workspace token. */
 const strings={
@@ -32,4 +33,5 @@ export function mountMailboxCallback(app:Express){
   }catch(e:any){res.status(400).type('html').send(page(lang,t.fail,t.back,String(e.message).slice(0,300),true));}
  });
  mountDeliveryRoutes(app);
+ mountMailboxProviderFailureRecorder(app);
 }
