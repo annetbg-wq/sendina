@@ -1,3 +1,5 @@
+import {currentProviderFailure,providerFailureBlocker} from './providerhealth';
+
 /** Readiness of a mailbox to send. A DNS record is evidence about a domain, never a connection. */
 export type Connection='none'|'oauth'|'smtp';
 export type Check='none'|'ok'|'failed';
@@ -38,10 +40,15 @@ const dnsOf=(domain:any)=>({spf:Boolean(domain?.dns?.spf),dkim:Boolean(domain?.d
  dmarc:Boolean(domain?.dns?.dmarc),dnsCheckedAt:domain?.dns?.checkedAt??null});
 const checkOf=(value:any):Check=>value?.status==='ok'?'ok':value?.status==='failed'?'failed':'none';
 
-export const mailboxReadiness=(domain:any,mailbox:any,stopped=false):Readiness=>
- readiness({stopped,connection:mailbox?.connection??'none',
+export function mailboxReadiness(domain:any,mailbox:any,stopped=false):Readiness{
+ const base=readiness({stopped,connection:mailbox?.connection??'none',
   auth:checkOf(mailbox?.auth),testSend:checkOf(mailbox?.testSend),
   imap:checkOf(mailbox?.imap),incoming:checkOf(mailbox?.incoming),...dnsOf(domain)});
+ const failure=currentProviderFailure(mailbox);
+ if(!failure)return base;
+ const blocker=providerFailureBlocker(failure);
+ return {ready:false,blockers:base.blockers.includes(blocker)?base.blockers:[...base.blockers,blocker]};
+}
 
 /** A domain is ready when at least one of its mailboxes is. */
 export function domainReadiness(domain:any,stopped=false):Readiness{

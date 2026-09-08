@@ -228,19 +228,36 @@ test('a real message leaves only when everything is in order, and every guard st
   assert.equal(failure.status,'failed');
   assert.equal(failure.reason,'SEND_FAILED');
   assert.match(failure.detail,/Gmail|Delegation/,'and says what the provider actually answered');
-  // The message never left, so it must not have cost a day of the domain's allowance, and it
-  // must still be a draft that a fixed mailbox can carry.
-  assert.equal((await req('/sender')).body.allowance.used,1,'a failed send costs no allowance');
-  const retryable=(await req('/state')).body.messages.find((m:any)=>m.email===alsoPermitted);
-  assert.equal(retryable.status,'draft','so it can be sent again once the mailbox is fixed');
 
-  // And once the mailbox works again, that same draft goes out — the last of the allowance.
+  // The provider proved this send was rejected, so quota is returned and the draft remains.
+  // But the mailbox itself is now unhealthy and cannot be selected again until it is re-verified.
+  const failedState=(await req('/state')).body;
+  assert.equal(failedState.domains.find((d:any)=>d.id===domainId).used,1,'a failed send costs no allowance');
+  const retryable=failedState.messages.find((m:any)=>m.email===alsoPermitted);
+  assert.equal(retryable.status,'draft','the rejected message remains a draft');
+  const degraded=(await req('/sender')).body;
+  assert.equal(degraded.sendingEnabled,false);
+  assert.equal(degraded.sendingBlocker,'SENDER_NOT_READY');
+  assert.equal((await req('/capabilities')).body.sendingBlocker,'SENDER_NOT_READY');
+
+  const unsafeRetry=await req(`/campaigns/${campaign.id}/send`,{});
+  assert.equal(unsafeRetry.status,422,'a failed mailbox cannot be silently reused');
+  assert.match(unsafeRetry.body.error,/ящика|провер/);
+
+  // A complete fresh verification is the recovery boundary. Its test message does not spend
+  // campaign quota, and only after all four proofs are newer than the failure may this draft send.
+  const recovered=(await req('/mailboxes/verify',{email:mailbox})).body;
+  for(const step of ['auth','testSend','imap','incoming'])
+   assert.equal(recovered.checks[step].status,'ok',`${step}: ${recovered.checks[step].detail}`);
+  assert.equal((await req('/sender')).body.sendingEnabled,true);
+  assert.equal((await req('/sender')).body.allowance.used,1);
+
   const retried=(await req(`/campaigns/${campaign.id}/send`,{})).body;
   assert.equal(retried.sent,1,JSON.stringify(retried.results));
   assert.deepEqual((await req('/sender')).body.allowance,{used:2,limit:2,remaining:0});
 
   // With the day's allowance spent, the quota is what refuses the next one.
   assert.equal((await req('/capabilities')).body.sendingBlocker,'DOMAIN_LIMIT');
-  assert.equal(stub.sent.length,before+2,'exactly two messages were ever sent');
+  assert.equal(stub.sent.length,before+3,'two campaign messages plus the recovery verification were sent');
  }finally{child.kill();stub.server.close();dnsStub.close();smtp.server.close();}
 });
