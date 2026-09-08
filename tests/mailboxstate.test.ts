@@ -41,6 +41,24 @@ test('provider failure classes take precedence over generic failed checks',()=>{
  assert.equal(mailboxState(domain(reauth),reauth).state,'REAUTH_REQUIRED');
 });
 
+test('a complete verification newer than the provider failure restores READY',()=>{
+ const failureAt='2026-09-08T10:00:00Z';
+ const recoveredAt='2026-09-08T10:01:00Z';
+ const recovered=connected({
+  auth:{...ok,at:recoveredAt},testSend:{...ok,at:recoveredAt},imap:{...ok,at:recoveredAt},incoming:{...ok,at:recoveredAt},
+  lastProviderError:{class:'REAUTH_REQUIRED',code:'invalid_grant',at:failureAt}
+ });
+ assert.equal(mailboxState(domain(recovered),recovered).state,'READY');
+ assert.equal(mailboxState(domain(recovered),recovered).ready,true);
+
+ const partial=connected({
+  auth:{...ok,at:recoveredAt},testSend:{...ok,at:recoveredAt},imap:{...ok,at:recoveredAt},incoming:{...ok,at:failureAt},
+  lastProviderError:{class:'REAUTH_REQUIRED',code:'invalid_grant',at:failureAt}
+ });
+ assert.equal(mailboxState(domain(partial),partial).state,'REAUTH_REQUIRED',
+  'all four proofs must be newer before an error is considered stale');
+});
+
 test('DNS and emergency blockers still prevent READY',()=>{
  const box=connected();
  const badDomain={dns:{spf:false,dkim:false,dmarc:true,checkedAt:'2026-09-08T00:00:00Z'},mailboxes:[box]};
