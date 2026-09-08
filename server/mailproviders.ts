@@ -2,9 +2,11 @@ import {resolveMx} from 'node:dns/promises';
 import nodemailer from 'nodemailer';
 import {fetchIncoming,verifyImap,type Incoming,type ImapAccess} from './imap';
 import {limits} from './timeout';
+import {buildMime,toBase64Url} from './mime';
 
 export type Provider='google'|'microsoft'|'smtp';
 export type Detection={email:string;domain:string;provider:Provider;workspace:boolean;personal:boolean;mx:string[];note:string};
+export type SendOptions={html?:string;replyTo?:string;messageId?:string;inReplyTo?:string;references?:string[];threadId?:string};
 
 /** Personal mail is a secondary test case; the product targets mailboxes on an organisation's domain. */
 const personalDomains:Record<string,Provider>={'gmail.com':'google','googlemail.com':'google',
@@ -84,33 +86,35 @@ async function accessToken(provider:Provider,refreshToken:string,apps:MailApps){
  return String(data.access_token);
 }
 
-const rfc822=(from:string,to:string,subject:string,text:string)=>
- [`From: ${from}`,`To: ${to}`,`Subject: =?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`,
-  'MIME-Version: 1.0','Content-Type: text/plain; charset=UTF-8','Content-Transfer-Encoding: base64','',
-  Buffer.from(text).toString('base64')].join('\r\n');
-
 /** Sends one real message through the connected account. Nothing else proves a mailbox works. */
-export async function sendMessage(secret:any,to:string,subject:string,text:string,apps:MailApps){
+export async function sendMessage(secret:any,to:string,subject:string,text:string,apps:MailApps,options:SendOptions={}){
  const from=secret.email as string;
  if(secret.kind==='oauth'){
   const token=await accessToken(secret.provider,secret.refreshToken,apps);
   if(secret.provider==='google'){
-   const raw=Buffer.from(rfc822(from,to,subject,text)).toString('base64url');
+   const raw=toBase64Url(buildMime({from,to,subject,text,html:options.html,replyTo:options.replyTo,
+    messageId:options.messageId,inReplyTo:options.inReplyTo,references:options.references}));
+   const body:any={raw};
+   if(options.threadId)body.threadId=options.threadId;
    const r=await fetch(providerUrl('https://gmail.googleapis.com/gmail/v1/users/me/messages/send'),
-    {method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({raw})});
+    {method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify(body)});
    if(!r.ok)throw Error(`Gmail отклонил отправку: ${(await r.text()).slice(0,300)}`);
-   return {id:String((await r.json()).id??''),via:'Gmail API'};
+   const sent=await r.json();
+   return {id:String(sent?.id??''),threadId:String(sent?.threadId??options.threadId??''),via:'Gmail API'};
   }
+  const message:any={subject,body:{contentType:options.html?'HTML':'Text',content:options.html??text},
+   toRecipients:[{emailAddress:{address:to}}]};
+  if(options.replyTo)message.replyTo=[{emailAddress:{address:options.replyTo}}];
   const r=await fetch(providerUrl('https://graph.microsoft.com/v1.0/me/sendMail'),
    {method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
-    body:JSON.stringify({message:{subject,body:{contentType:'Text',content:text},
-     toRecipients:[{emailAddress:{address:to}}]},saveToSentItems:true})});
+    body:JSON.stringify({message,saveToSentItems:true})});
   if(!r.ok)throw Error(`Microsoft Graph отклонил отправку: ${(await r.text()).slice(0,300)}`);
-  return {id:'',via:'Microsoft Graph'};
+  return {id:'',threadId:'',via:'Microsoft Graph'};
  }
  const transport=smtpTransport(secret);
- const info=await transport.sendMail({from,to,subject,text});
- return {id:String(info.messageId??''),via:`SMTP ${secret.host}`};
+ const info=await transport.sendMail({from,to,subject,text,html:options.html,replyTo:options.replyTo,
+  messageId:options.messageId,inReplyTo:options.inReplyTo,references:options.references});
+ return {id:String(info.messageId??''),threadId:'',via:`SMTP ${secret.host}`};
 }
 
 /** One place that turns a stored credential into a transport, so the encryption flag the person
