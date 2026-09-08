@@ -2,7 +2,7 @@ import {resolveMx} from 'node:dns/promises';
 import nodemailer from 'nodemailer';
 import {fetchIncoming,verifyImap,type Incoming,type ImapAccess} from './imap';
 import {limits} from './timeout';
-import {buildMime,toBase64Url} from './mime';
+import {buildMime,toBase64Url,deterministicMessageId} from './mime';
 
 export type Provider='google'|'microsoft'|'smtp';
 export type Detection={email:string;domain:string;provider:Provider;workspace:boolean;personal:boolean;mx:string[];note:string};
@@ -89,32 +89,34 @@ async function accessToken(provider:Provider,refreshToken:string,apps:MailApps){
 /** Sends one real message through the connected account. Nothing else proves a mailbox works. */
 export async function sendMessage(secret:any,to:string,subject:string,text:string,apps:MailApps,options:SendOptions={}){
  const from=secret.email as string;
+ const messageId=options.messageId||deterministicMessageId({from,to,subject,text});
  if(secret.kind==='oauth'){
   const token=await accessToken(secret.provider,secret.refreshToken,apps);
   if(secret.provider==='google'){
    const raw=toBase64Url(buildMime({from,to,subject,text,html:options.html,replyTo:options.replyTo,
-    messageId:options.messageId,inReplyTo:options.inReplyTo,references:options.references}));
+    messageId,inReplyTo:options.inReplyTo,references:options.references}));
    const body:any={raw};
    if(options.threadId)body.threadId=options.threadId;
    const r=await fetch(providerUrl('https://gmail.googleapis.com/gmail/v1/users/me/messages/send'),
     {method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify(body)});
    if(!r.ok)throw Error(`Gmail отклонил отправку: ${(await r.text()).slice(0,300)}`);
    const sent=await r.json();
-   return {id:String(sent?.id??''),threadId:String(sent?.threadId??options.threadId??''),via:'Gmail API'};
+   return {id:String(sent?.id??''),threadId:String(sent?.threadId??options.threadId??''),messageId,via:'Gmail API'};
   }
-  const message:any={subject,body:{contentType:options.html?'HTML':'Text',content:options.html??text},
-   toRecipients:[{emailAddress:{address:to}}]};
-  if(options.replyTo)message.replyTo=[{emailAddress:{address:options.replyTo}}];
+  /** Graph sendMail returns 202 with no response body. Supplying our own stable RFC Message-ID
+      lets the reconciliation layer find the accepted message in Sent Items with Mail.Read. */
+  const mime=buildMime({from,to,subject,text,html:options.html,replyTo:options.replyTo,
+   messageId,inReplyTo:options.inReplyTo,references:options.references});
+  const graphBody=Buffer.from(mime,'utf8').toString('base64');
   const r=await fetch(providerUrl('https://graph.microsoft.com/v1.0/me/sendMail'),
-   {method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},
-    body:JSON.stringify({message,saveToSentItems:true})});
+   {method:'POST',headers:{'Content-Type':'text/plain',Authorization:`Bearer ${token}`},body:graphBody});
   if(!r.ok)throw Error(`Microsoft Graph отклонил отправку: ${(await r.text()).slice(0,300)}`);
-  return {id:'',threadId:'',via:'Microsoft Graph'};
+  return {id:'',threadId:'',messageId,via:'Microsoft Graph'};
  }
  const transport=smtpTransport(secret);
  const info=await transport.sendMail({from,to,subject,text,html:options.html,replyTo:options.replyTo,
-  messageId:options.messageId,inReplyTo:options.inReplyTo,references:options.references});
- return {id:String(info.messageId??''),threadId:'',via:`SMTP ${secret.host}`};
+  messageId,inReplyTo:options.inReplyTo,references:options.references});
+ return {id:String(info.messageId??''),threadId:'',messageId:String(info.messageId??messageId),via:`SMTP ${secret.host}`};
 }
 
 /** One place that turns a stored credential into a transport, so the encryption flag the person
