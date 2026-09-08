@@ -24,6 +24,18 @@ test('a stale auth rejection cannot label a newly connected credential REAUTH_RE
  assert.equal(mailboxState(domain,mailbox).state,'CONNECTING');
 });
 
+test('a new OAuth connection generation retires the revoked-token error but still requires fresh proof',()=>{
+ const mailbox={email:'out@example.com',connection:'oauth',connectedAt:'2026-09-08T12:00:00Z',
+  lastProviderError:{class:'REAUTH_REQUIRED',code:'invalid_grant',at:'2026-09-08T11:55:00Z'},
+  auth:proof('ok','2026-09-08T11:00:00Z'),testSend:proof('ok','2026-09-08T11:01:00Z'),
+  imap:proof('ok','2026-09-08T11:02:00Z'),incoming:proof('ok','2026-09-08T11:03:00Z')};
+ const state=mailboxState(domain,mailbox);
+ assert.equal(state.state,'CONNECTING');
+ assert.equal(state.action,'VERIFY');
+ assert.equal(state.blockers.includes('PROVIDER_REAUTH_REQUIRED'),false);
+ assert.equal(state.ready,false);
+});
+
 test('all proofs from the current connection make the mailbox ready',()=>{
  const mailbox={email:'out@example.com',connection:'oauth',connectedAt:'2026-09-08T12:00:00Z',
   auth:proof('ok','2026-09-08T12:00:01Z'),testSend:proof('ok','2026-09-08T12:00:02Z'),
