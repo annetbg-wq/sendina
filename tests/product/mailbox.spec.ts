@@ -3,19 +3,12 @@ import {signIn,noOriginError} from './signin';
 
 /** Connecting a mailbox, driven through the interface.
 
-    Two separate failures were found by hand and both looked identical from the outside — a modal
-    that never came back. They are not the same defect and neither fix covers the other:
+    The product now has two deliberately different paths:
+    - Google/Microsoft: platform OAuth over HTTPS is the standard path.
+    - Other/custom providers: SMTP/IMAP is an explicit advanced compatibility path.
 
-    1. The mailbox was created on the server and the interface never showed it, because the screen
-       only re-read the workspace when a call succeeded. Connecting creates the mailbox first and
-       checks it second, so a failed check threw before the refresh and left the interface
-       displaying a state from before the mailbox existed.
-
-    2. Nothing bounded the check itself. A host that accepts a connection and then says nothing
-       held the request open, so there was no response to react to in the first place.
-
-    These tests drive the real interface against a host that is not listening, which is the
-    cheapest thing that reproduces both. */
+    A failed custom check must still leave the created mailbox visible, while the primary status is
+    a product state and the old transport checks live only in technical diagnostics. */
 
 test.describe.configure({mode:'serial'});
 
@@ -28,7 +21,7 @@ const openMailSettings=async(page:Page)=>{
  await page.getByRole('button',{name:'Почта и домены'}).click();
 };
 
-test('a mailbox that fails its check is still shown, with the step that stopped it',async({page})=>{
+test('a custom mailbox that fails its check is still shown with a product state and diagnostics',async({page})=>{
  await signIn(page,superadmin);
  await openMailSettings(page);
  await page.getByRole('button',{name:'Подключить ящик'}).click();
@@ -37,32 +30,33 @@ test('a mailbox that fails its check is still shown, with the step that stopped 
  await dialog.getByLabel('Рабочий e-mail').fill('outreach@unreachable.example');
  await dialog.getByRole('button',{name:'Определить провайдера'}).click();
 
- // An unknown domain offers the ordinary password route, already filled in as far as it can be.
- await dialog.getByRole('button',{name:'Подключить и проверить'}).waitFor({timeout:30000});
- const advanced=dialog.getByRole('button',{name:'Расширенная настройка'});
- if(await advanced.count())await advanced.click();
+ // An unknown provider uses the explicit custom SMTP/IMAP path rather than pretending to be OAuth.
+ await dialog.getByRole('button',{name:'Подключить custom SMTP/IMAP'}).waitFor({timeout:30000});
+ const edit=dialog.getByRole('button',{name:'Изменить вручную'});
+ if(await edit.count())await edit.click();
  await dialog.getByLabel('SMTP host').fill(dead.host);
  await dialog.getByLabel('SMTP порт').fill(String(dead.port));
  await dialog.getByLabel('IMAP host').fill(dead.host);
  await dialog.getByLabel('IMAP порт').fill(String(dead.port));
  await dialog.getByLabel('Пароль или пароль приложения').fill('app-password');
- await dialog.getByRole('button',{name:'Подключить и проверить'}).click();
+ await dialog.getByRole('button',{name:'Подключить custom SMTP/IMAP'}).click();
 
- // The first defect: the modal must come back, and it must come back on its own.
+ // The modal must close once the server has answered, even when verification itself failed.
  await expect(page.getByRole('dialog'),'the modal must close once the server has answered')
   .toBeHidden({timeout:60000});
 
- // The second: the mailbox exists on the server, so the screen has to show it — the check
- // failing is not a reason to keep displaying a workspace that no longer matches.
- await expect(page.getByText('outreach@unreachable.example').first()).toBeVisible();
+ // The mailbox exists on the server, so the product must show it immediately.
+ const mailbox=page.locator('.mailbox').filter({hasText:'outreach@unreachable.example'});
+ await expect(mailbox).toBeVisible();
+ await expect(mailbox).toContainText(/Временно недоступен|Подключается/);
+ await expect(mailbox).toContainText('Custom SMTP/IMAP');
 
- // And the outcome is stated, naming the step, rather than left as a silent failure.
+ // The result is still available, but as technical diagnostics rather than the primary status.
  const result=page.locator('.check-result');
  await expect(result).toBeVisible();
- await expect(result).toContainText('Проверка ящика');
- await expect(result).toContainText('Остановилась');
- // All four steps are accounted for; none is left blank.
- for(const step of ['Вход','Отправка','Приём','Чтение письма'])
+ await expect(result).toContainText('Техническая диагностика');
+ await expect(result).toContainText('Требует внимания');
+ for(const step of ['Вход','Отправка','Канал приёма','Чтение теста'])
   await expect(result.locator('.check-steps')).toContainText(step);
  await expect(result.locator('.check-steps li').first()).toHaveClass(/failed/);
 
@@ -73,23 +67,22 @@ test('re-checking a mailbox that cannot answer ends too, and never spins forever
  await signIn(page,superadmin);
  await openMailSettings(page);
 
- const button=page.getByRole('button',{name:'Проверить ящик'}).first();
+ const button=page.getByRole('button',{name:'Проверить состояние'}).first();
  await expect(button,'the mailbox connected by the previous test is listed').toBeVisible();
  await button.click();
 
  // The button is disabled while the check runs and released when it ends. Being released is the
- // assertion: before the deadlines existed this stayed disabled until the tab was closed.
+ // assertion: a dead provider must never leave the product spinning forever.
  await expect(button).toBeEnabled({timeout:60000});
 
  const result=page.locator('.check-result');
  await expect(result).toBeVisible();
- await expect(result).toContainText('Остановилась');
- // A reason code, not just a sentence, so the interface can say something useful about it.
+ await expect(result).toContainText('Требует внимания');
  await expect(result).toContainText(/TIMEOUT|CONNECTION_REFUSED|HOST_NOT_FOUND|FAILED/);
  await noOriginError(page);
 });
 
-test('a Gmail address is offered Google first, and the advanced route is not an empty form',async({page})=>{
+test('a Gmail address is offered HTTPS OAuth first, with custom SMTP/IMAP folded away',async({page})=>{
  await signIn(page,superadmin);
  await openMailSettings(page);
  await page.getByRole('button',{name:'Подключить ящик'}).click();
@@ -98,16 +91,15 @@ test('a Gmail address is offered Google first, and the advanced route is not an 
  await dialog.getByLabel('Рабочий e-mail').fill('sales@gmail.com');
  await dialog.getByRole('button',{name:'Определить провайдера'}).click();
 
- // The harness registers the platform Google application, so this is the case the product is
- // meant to reach: consent is the offer, in as many words.
+ // The harness registers the platform Google application, so consent over HTTPS is the primary path.
  await expect(dialog.getByRole('button',{name:'Подключить через Google'})).toBeVisible({timeout:30000});
+ await expect(dialog).toContainText('официальный API провайдера по HTTPS');
+ await expect(dialog).toContainText('Пароль, SMTP и IMAP не нужны');
 
- // SMTP and IMAP are the advanced route, folded away rather than presented as the way in.
+ // SMTP/IMAP is not presented as the normal route.
  await expect(dialog.getByLabel('SMTP host')).toBeHidden();
- await dialog.getByRole('button',{name:/Расширенный способ подключения/}).click();
-
- // And when it is opened it is already filled in. Being asked to type these by hand, one
- // validation error at a time, is the defect this asserts against.
+ await dialog.getByRole('button',{name:'Custom SMTP/IMAP (расширенно)'}).click();
+ await expect(dialog).toContainText('Отдельный custom-режим');
  await expect(dialog).toContainText('smtp.gmail.com');
  await expect(dialog).toContainText('imap.gmail.com');
  await dialog.getByRole('button',{name:'Изменить вручную'}).click();
@@ -119,33 +111,35 @@ test('a Gmail address is offered Google first, and the advanced route is not an 
  await noOriginError(page);
 });
 
-test('an unregistered platform application is never the user’s problem to look at',async({page})=>{
+test('missing Microsoft platform OAuth is a platform blocker, not a silent password fallback',async({page})=>{
  await signIn(page,superadmin);
  await openMailSettings(page);
  await page.getByRole('button',{name:'Подключить ящик'}).click();
 
- // The harness registers Google but not Microsoft, which is the state the tester hit. Consent
- // through Microsoft cannot be completed here, so it is not a route this screen has: offering a
- // button that leads nowhere, or reporting the platform's own missing setup, is not a choice
- // between two ways in — it is one broken way and one hidden one.
+ // The harness registers Google but not Microsoft. The product must say that the Sendina platform
+ // application is missing instead of quietly turning app-password SMTP/IMAP into the normal path.
  const dialog=page.getByRole('dialog');
  await dialog.getByLabel('Рабочий e-mail').fill('sales@outlook.com');
  await dialog.getByRole('button',{name:'Определить провайдера'}).click();
 
- // The working route is what is on screen, already filled in, ready for an app password.
- await expect(dialog.getByLabel('Пароль или пароль приложения')).toBeVisible({timeout:30000});
- await expect(dialog.getByRole('button',{name:'Подключить и проверить'})).toBeVisible();
+ await expect(dialog.getByRole('button',{name:/Подключить через Microsoft/})).toHaveCount(0);
+ await expect(dialog).toContainText('Подключение Microsoft сейчас недоступно на стороне Sendina');
+ await expect(dialog).toContainText('Настройте OAuth-приложение платформы');
+ await expect(dialog.getByLabel('Пароль или пароль приложения')).toBeHidden();
+
+ // Custom SMTP/IMAP still exists for compatibility, but only after an explicit advanced choice.
+ const custom=dialog.getByRole('button',{name:'Custom SMTP/IMAP (расширенно)'});
+ await expect(custom).toBeVisible();
+ await custom.click();
+ await expect(dialog.getByLabel('Пароль или пароль приложения')).toBeVisible();
  await expect(dialog).toContainText('smtp.office365.com');
  await expect(dialog).toContainText('outlook.office365.com');
- await expect(dialog.getByLabel('Пользователь')).toHaveValue('sales@outlook.com');
+ await expect(dialog).toContainText('может не работать на хостинге с закрытыми почтовыми портами');
 
- // And nothing about the platform's own OAuth setup appears: no button, no failure to report,
- // no client id, no secret, no instructions. None of it is actionable from this screen.
- await expect(dialog.getByRole('button',{name:/Подключить через Microsoft/})).toHaveCount(0);
- await expect(dialog.getByRole('button',{name:'Настроить приложение платформы'})).toHaveCount(0);
+ // Even for a superadmin the connect form never asks for per-mailbox OAuth application secrets.
  const text=await dialog.innerText();
- for(const leak of ['OAuth','Client ID','client id','client secret','Client secret','Адрес возврата'])
-  expect(text,`the connect dialog must not mention "${leak}"`).not.toContain(leak);
+ for(const leak of ['Client Secret','client secret'])
+  expect(text,`the connect dialog must not ask for "${leak}"`).not.toContain(leak);
  await noOriginError(page);
 });
 
@@ -154,10 +148,6 @@ test('organisation search is named as a platform setting, apart from Google Work
  await page.locator('nav').getByRole('button',{name:'Настройки',exact:true}).click();
  await page.getByRole('button',{name:'Интеграции'}).click();
 
- // It has no per-account form, so it never appeared among the account connections and looked
- // simply absent. It is now stated in its own right, and not beside Google Workspace.
- // Selected by its heading: the account-connections card next to it mentions the same words in
- // a status badge and a mode selector, which is part of why it looked like there was no setting.
  const card=page.locator('section.setting')
   .filter({has:page.getByRole('heading',{name:'Поиск организаций'})});
  await expect(card).toBeVisible();
@@ -165,11 +155,9 @@ test('organisation search is named as a platform setting, apart from Google Work
  await expect(card).toContainText('Не настроено');
  await expect(card).toContainText('платформенная настройка');
 
- // A superadmin is sent to the one place it is entered.
  await card.getByRole('button',{name:/Настроить на экране/}).click();
  const platform=page.locator('section').filter({hasText:'Приложения платформы'}).first();
  await expect(platform.getByLabel('Google Places API key')).toBeVisible();
- // Deliberately not the same thing as the mail application, and it says so in as many words.
  await expect(platform).toContainText('не Google Workspace');
  await expect(platform).toContainText('отдельное приложение и отдельный ключ');
  await noOriginError(page);
@@ -182,7 +170,6 @@ test('a superadmin can see whether platform mail works, and prove it',async({pag
  const mail=page.locator('section').filter({hasText:'Системная почта'}).first();
  await expect(mail).toBeVisible();
  await expect(mail).toContainText('Настроена');
- // The exact variables an operator has to set, named rather than described.
  for(const name of ['SYSTEM_SMTP_HOST','SYSTEM_SMTP_USER','SYSTEM_SMTP_PASS'])
   await expect(mail).toContainText(name);
 

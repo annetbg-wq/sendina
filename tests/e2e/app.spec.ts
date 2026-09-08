@@ -48,17 +48,19 @@ test('mobile layout stays within viewport',async({page})=>{
  await expect(page.locator('h1')).toHaveText('Настройки');
 });
 
-test('Domains and mailboxes moved into Settings without losing the screen',async({page})=>{
+test('Mail settings use product mailbox state; transport checks are diagnostics, not the main status',async({page})=>{
  await page.goto('/');await page.waitForSelector('nav');
- // It is no longer a top-level destination.
  await expect(page.locator('nav')).not.toContainText('Домены');
  await page.locator('nav').getByRole('button',{name:'Настройки',exact:true}).click();
  await page.getByRole('button',{name:'Почта и домены'}).click();
- // The whole mailbox screen is still here: readiness, the four checks and the DNS check.
+
  await expect(page.getByRole('button',{name:'Подключить ящик'})).toBeVisible();
- // The mailbox list, its readiness blockers and the DNS check are all still on the screen.
+ await expect(page.getByText('Google и Microsoft работают через HTTPS API')).toBeVisible();
  await expect(page.locator('.mailbox').first()).toBeVisible();
- await expect(page.locator('.blockers').first()).toBeVisible();
+ // Demo mailboxes are disconnected, so their product state is the primary visible status.
+ await expect(page.locator('.mailbox').first()).toContainText('Не подключён');
+ // Old transport proof badges must not be permanently painted across a disconnected mailbox card.
+ await expect(page.locator('.mailbox').first().locator('.check-row')).toHaveCount(0);
  await expect(page.getByRole('button',{name:'Проверить DNS'}).first()).toBeVisible();
 });
 
