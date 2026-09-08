@@ -6,14 +6,14 @@ import {getAuth,setAuth} from './authstore';
 import {publicAddress} from './config';
 import {accountSettings} from './accountsettings';
 import type {Ctx} from './context';
-import {detectProvider,oauthConfig,oauthReady,exchangeCode,sendMessage,verifyAccess,verifyIncomingChannel,readIncoming,type Provider,type MailApps} from './mailproviders';
+import {detectProvider,oauthConfig,oauthReady,exchangeCode,type Provider,type MailApps} from './mailproviders';
+import {mailProvider,type MailProvider,type MailSyncCursor} from './mailcontract';
 import {guessMailSettings,providerFallback,type MailSettings} from './autoconfig';
 import {platformSettings,resolveMailApps,appOwner} from './platform';
 import {sealFields,openFields} from './secrets';
 import {mailboxReadiness,domainReadiness} from './readiness';
 import {withTimeout,budget,limits,PhaseTimeout} from './timeout';
 import {issueMailOauthState,consumeMailOauthState} from './oauthstate';
-import {readIncrementalIncoming,type InboundCursor} from './inboundcursor';
 
 /** Credentials live in the auth store, never in the workspace state the UI can read. */
 const secretKey=(accountId:string,email:string)=>`mailbox:${accountId}:${email.toLowerCase()}`;
@@ -31,17 +31,17 @@ const getSecret=async(accountId:string,email:string)=>{
  return stored?openFields(stored,secretFields):null;
 };
 
-/** Waits for one specific message to come back, whichever way this mailbox receives mail.
-    Polling stops at the deadline rather than after a fixed number of tries, so a slow mailbox
-    gets the time it has and a dead one never holds the request open past the budget. */
-async function awaitMarker(secret:any,apps:MailApps,marker:string,allowedMs:number){
+/** Waits for one specific message to come back through the provider contract. Polling stops at the
+    deadline rather than after a fixed number of tries, so a slow mailbox gets the time it has and
+    a dead one never holds the request open past the budget. */
+async function awaitMarker(provider:MailProvider,marker:string,allowedMs:number){
  const attempts=Number(process.env.VERIFY_ATTEMPTS??6);
  const delay=Number(process.env.VERIFY_DELAY_MS??2500);
  const window=budget(allowedMs);
  let last:any=null;
  for(let attempt=0;attempt<attempts&&!window.expired();attempt++){
   try{
-   const messages=await withTimeout('incoming',window.spend(limits().phase),()=>readIncoming(secret,apps,30));
+   const messages=await withTimeout('incoming',window.spend(limits().phase),()=>provider.listMessages(30));
    const found=messages.find(m=>m.subject.includes(marker)||m.text.includes(marker));
    if(found)return found;
   }catch(e:any){last=e;}
@@ -100,16 +100,15 @@ const rules:[RegExp,string][]=[
 ];
 export const classify=(text:string)=>rules.find(([pattern])=>pattern.test(text))?.[1]??'neutral';
 
-export type SenderCredentials={secret:any;apps:MailApps;email:string};
+export type SenderCredentials={provider:MailProvider;email:string};
 export async function senderCredentials(accountId:string,email:string):Promise<SenderCredentials|null>{
  const secret=await getSecret(accountId,email);
  if(!secret)return null;
- return {secret,apps:await appsFor(accountId),email:email.toLowerCase()};
+ return {provider:mailProvider(secret,await appsFor(accountId)),email:email.toLowerCase()};
 }
 
 export async function sendThrough(credentials:SenderCredentials,to:string,subject:string,text:string){
- return withTimeout('send',limits().phase,
-  ()=>sendMessage(credentials.secret,to,subject,text,credentials.apps));
+ return withTimeout('send',limits().phase,()=>credentials.provider.sendMessage({to,subject,text}));
 }
 
 export type StepName='auth'|'testSend'|'imap'|'incoming';
@@ -204,7 +203,7 @@ export const mailboxOperations={
   findMailbox(await read(ctx.accountId),email);
   const secret=await getSecret(ctx.accountId,email);
   if(!secret)throw Error('Ящик не подключён. Сначала подключите его.');
-  const apps=await appsFor(ctx.accountId);
+  const provider=mailProvider(secret,await appsFor(ctx.accountId));
   const marker=`SND-${randomBytes(5).toString('hex').toUpperCase()}`;
   const cap=limits();
   const whole=budget(cap.total);
@@ -224,19 +223,19 @@ export const mailboxOperations={
    }
   };
 
-  const authOk=await step('auth',cap.phase,()=>verifyAccess(secret,apps));
+  const authOk=await step('auth',cap.phase,()=>provider.checkConnection());
   if(!authOk)for(const name of ['testSend','imap','incoming'] as StepName[])
    results[name]??=skipped(name,'Пропущено: вход в ящик не прошёл.','SKIPPED');
   const sendOk=authOk&&await step('testSend',cap.phase,async()=>{
-   const sent=await sendMessage(secret,email,`Sendina — проверка ${marker}`,
-    `Проверка ящика ${email}. Код ${marker}.
+   const sent=await provider.sendMessage({to:email,subject:`Sendina — проверка ${marker}`,
+    text:`Проверка ящика ${email}. Код ${marker}.
 
-Это письмо подтверждает отправку и приём. Адресатов кампаний оно не затрагивает.`,apps);
+Это письмо подтверждает отправку и приём. Адресатов кампаний оно не затрагивает.`});
    return `Отправлено через ${sent.via}`;});
-  const channelOk=authOk&&await step('imap',cap.phase,()=>verifyIncomingChannel(secret,apps));
+  const channelOk=authOk&&await step('imap',cap.phase,()=>provider.checkIncoming());
   if(authOk){
    if(sendOk&&channelOk)await step('incoming',cap.readback,async()=>{
-    const found=await awaitMarker(secret,apps,marker,whole.spend(cap.readback));
+    const found=await awaitMarker(provider,marker,whole.spend(cap.readback));
     if(!found)throw Error(`Тестовое письмо ${marker} не появилось во входящих за отведённое время. Проверьте приём почты.`);
     return `Входящее письмо ${marker} прочитано`;});
    else results.incoming=skipped('incoming','Пропущено: отправка или приём не прошли.','SKIPPED');
@@ -263,12 +262,12 @@ export const mailboxOperations={
   const cap=limits();
   let result:{status:'ok'|'failed';detail:string;code:string};
   const started=Date.now();
-  try{const apps=await appsFor(ctx.accountId);
-   const sent=await withTimeout('testSend',cap.phase,()=>sendMessage(secret,target,'Sendina — тестовая отправка',
-    `Это тестовое письмо Sendina.
+  try{const provider=mailProvider(secret,await appsFor(ctx.accountId));
+   const sent=await withTimeout('testSend',cap.phase,()=>provider.sendMessage({to:target,subject:'Sendina — тестовая отправка',
+    text:`Это тестовое письмо Sendina.
 
 Оно подтверждает, что ящик ${email} действительно может отправлять почту.
-Никаких адресатов кампании оно не затрагивает.`,apps));
+Никаких адресатов кампании оно не затрагивает.`}));
    result={status:'ok',detail:`Доставлено через ${sent.via}`,code:'OK'};}
   catch(e:any){result={status:'failed',detail:String(e?.message??e).slice(0,300),
    code:e instanceof PhaseTimeout?'TIMEOUT':reasonOf(e)};}
@@ -295,12 +294,11 @@ export const mailboxOperations={
   const {mailbox:beforeMailbox}=findMailbox(before,email);
   const secret=await getSecret(ctx.accountId,email);
   if(!secret)throw Error('Ящик не подключён. Сначала подключите его.');
-  const apps=await appsFor(ctx.accountId);
-  const providerCursor=beforeMailbox.incomingCursor as InboundCursor|null|undefined;
-  const oauthIncremental=secret.kind==='oauth'&&['google','microsoft'].includes(secret.provider);
-  const batch=oauthIncremental
-   ?await readIncrementalIncoming(secret,apps,providerCursor??null,limit)
-   :{messages:await readIncoming(secret,apps,limit),cursor:null as InboundCursor|null,reset:false};
+  const provider=mailProvider(secret,await appsFor(ctx.accountId));
+  const storedCursor=beforeMailbox.incomingCursor as MailSyncCursor|null|undefined;
+  const legacyUid=Number(beforeMailbox.incomingUid??0);
+  const cursor=storedCursor??(legacyUid>0?{provider:provider.kind,value:String(legacyUid)}:null);
+  const batch=await provider.syncMessages(cursor,limit);
   const messages=batch.messages;
   return change(ctx.accountId,s=>{const {mailbox}=findMailbox(s,email);
    let added=0,unmatched=0,highest=Number(mailbox.incomingUid??0),duplicates=0;
@@ -330,9 +328,9 @@ ${message.text}`);
     added++;
    }
    mailbox.incomingUid=highest;
-   if(oauthIncremental)mailbox.incomingCursor=batch.cursor;
+   mailbox.incomingCursor=batch.cursor;
    if(added||unmatched||duplicates||batch.reset)audit(s,`Приём ответов ${email}: добавлено ${added}, дубли ${duplicates}, без совпадения ${unmatched}${batch.reset?', курсор переустановлен':''}.`);
-   return {email,added,duplicates,unmatched,scanned:messages.length,cursorAdvanced:oauthIncremental&&Boolean(batch.cursor),reset:batch.reset};});},
+   return {email,added,duplicates,unmatched,scanned:messages.length,cursorAdvanced:Boolean(batch.cursor),reset:batch.reset};});},
 
  status:async(ctx:Ctx)=>{const s=await read(ctx.accountId);
   return {stopped:s.stopped,domains:s.domains.map((d:any)=>({id:d.id,name:d.name,dns:d.dns,
