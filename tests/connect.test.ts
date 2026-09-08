@@ -18,14 +18,14 @@ function provider(){
    res.setHeader('Content-Type','application/json');
    const url=req.url??'';
    if(url==='/token')return res.end(JSON.stringify({access_token:'stub-access',refresh_token:'stub-refresh',scope:'gmail.send'}));
+   if(url.includes('/profile'))return res.end(JSON.stringify({historyId:'100'}));
+   if(url.includes('/history')){res.statusCode=404;return res.end(JSON.stringify({error:{message:'history baseline expired'}}));}
    if(url.includes('/messages/send')){
     if(failSend){res.statusCode=403;return res.end(JSON.stringify({error:{message:'Delegation denied'}}));}
     sent.push({auth:req.headers.authorization,body:JSON.parse(body||'{}')});
     return res.end(JSON.stringify({id:`stub-${sent.length}`}));
    }
-   // Listing the inbox: a message the mailbox sent to itself is delivered back to it.
    if(/\/messages\/stub-\d+/.test(url)){
-    // Gmail hands back decoded headers and a decoded text part, so the stub does the same.
     const index=Number(url.match(/stub-(\d+)/)![1])-1;
     const raw=Buffer.from(sent[index]?.body?.raw??'','base64url').toString();
     const header=(name:string)=>raw.match(new RegExp(`^${name}: (.*)$`,'im'))?.[1]?.trim()??'';
@@ -35,7 +35,7 @@ function provider(){
     const body=split<0?'':raw.slice(split).replace(/^\s+/,'');
     const text=/base64/i.test(raw.slice(0,split<0?raw.length:split))
      ?Buffer.from(body.replace(/\s/g,''),'base64').toString('utf8'):body;
-    return res.end(JSON.stringify({internalDate:String(Date.now()),
+    return res.end(JSON.stringify({id:`stub-${index+1}`,threadId:`thread-${index+1}`,internalDate:String(Date.now()),
      payload:{headers:[{name:'From',value:header('From')},{name:'Subject',value:subject},
       {name:'Message-Id',value:header('Message-Id')||`<stub-${index+1}@example>`}],
       mimeType:'text/plain',body:{data:Buffer.from(text).toString('base64url')}}}));
@@ -81,24 +81,20 @@ test('a mailbox becomes ready only after every proof, and a DNS check grants not
   token=await signIn(base,smtp,'operator@example.com');
   const email='outreach@no-such-domain-for-sendina.example';
 
-  // The platform owns the OAuth application, so nobody has to bring a client id.
   await req('/platform',{google:{clientId:'platform-client',clientSecret:'platform-secret'}});
   assert.equal((await req('/platform')).body.google.configured,true);
 
-  // Detection reports a route and connects nothing.
   const detected=(await req('/mailboxes/detect',{email})).body;
   assert.equal(detected.provider,'smtp');
   assert.equal(detected.appOwner,'none');
   assert.equal((await req('/state')).body.domains.some((d:any)=>d.name.includes('no-such-domain')),false,
    'detection alone must not create anything');
 
-  // The operator names the provider, as when a security gateway fronts the domain.
   const start=(await req('/mailboxes/oauth',{email,provider:'google'})).body;
   const authorize=new URL(start.url);
   assert.equal(authorize.searchParams.get('client_id'),'platform-client','the platform application is used');
   assert.match(authorize.searchParams.get('scope')!,/gmail\.readonly/,'reading replies needs a read scope');
   const state=authorize.searchParams.get('state')!;
-  // A new workspace starts empty, so this counts what the account itself has: nothing yet.
   assert.equal((await req('/mailboxes/status')).body.domains.length,0,'nothing connects before the redirect returns');
 
   const callback=await fetch(`${base}/oauth/mailbox/callback?code=stub-code&state=${state}`);
@@ -109,13 +105,11 @@ test('a mailbox becomes ready only after every proof, and a DNS check grants not
    ['AUTH_REQUIRED','TEST_SEND_REQUIRED','INCOMING_CHANNEL_REQUIRED','INCOMING_MESSAGE_REQUIRED','DNS_NOT_CHECKED'],
    'connecting proves nothing on its own, and every pending proof is listed');
 
-  // The refresh token is encrypted at rest and never reaches the workspace the UI reads.
   const stored=await readFile(join(dir,'auth.json'),'utf8');
   assert.ok(!stored.includes('stub-refresh'),'a refresh token must not be stored in the clear');
   assert.ok(stored.includes('enc.v1.'),'secrets are stored encrypted');
   assert.ok(!JSON.stringify((await req('/state')).body).includes('stub-refresh'));
 
-  // Sending works but nothing comes back: the mailbox stays unready.
   stub.deliver(false);
   const oneWay=(await req('/mailboxes/verify',{email})).body;
   assert.equal(oneWay.checks.auth.status,'ok');
@@ -124,7 +118,6 @@ test('a mailbox becomes ready only after every proof, and a DNS check grants not
   assert.equal(oneWay.ready,false);
   assert.ok(oneWay.readiness.blockers.includes('INCOMING_MESSAGE_FAILED'));
 
-  // With the message readable again, all four proofs pass.
   stub.deliver(true);
   const verified=(await req('/mailboxes/verify',{email})).body;
   for(const check of ['auth','testSend','imap','incoming'])
@@ -132,21 +125,18 @@ test('a mailbox becomes ready only after every proof, and a DNS check grants not
   assert.equal(verified.ready,false,'the domain records are still unchecked');
   assert.deepEqual(verified.readiness.blockers,['DNS_NOT_CHECKED']);
 
-  // A DNS check on a domain with no records reports what is missing and still grants nothing.
   const {domain}=await boxOf(email);
   await req(`/domains/${domain.id}/check`,{});
   const after=await boxOf(email);
   assert.equal(after.mailbox.readiness.ready,false);
   assert.deepEqual(after.mailbox.readiness.blockers,['SPF_MISSING','DKIM_MISSING','DMARC_MISSING']);
 
-  // A failing credential is reported as such and stops the later steps.
   stub.failSend(true);
   const failed=(await req('/mailboxes/verify',{email})).body;
   assert.equal(failed.checks.testSend.status,'failed');
   assert.equal(failed.checks.incoming.status,'failed');
   stub.failSend(false);
 
-  // --- Replies arrive through the same channel and reach the campaign they answer ---
   const campaign=(await req('/campaigns',{name:'Reply intake',market:'США',goal:'Продажа',
    context:'Кампания для проверки приёма ответов',event:'Встреча'})).body;
   await req(`/campaigns/${campaign.id}/contacts`,{contacts:[{email:'buyer@customer.example',name:'Buyer',
@@ -163,10 +153,8 @@ test('a mailbox becomes ready only after every proof, and a DNS check grants not
   assert.equal(arrived.campaignId,campaign.id,'and be filed against the campaign it answers');
   assert.equal(arrived.category,'positive');
   assert.equal(arrived.source,'inbox');
-  // The same message is never filed twice.
   assert.equal((await req('/mailboxes/sync',{email})).body.added,0);
 
-  // Disconnecting drops the credential and the mailbox falls back to unconnected.
   await req('/mailboxes/disconnect',{email});
   const gone=await boxOf(email);
   assert.equal(gone.mailbox.connection,'none');

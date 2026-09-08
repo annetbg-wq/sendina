@@ -45,7 +45,7 @@ async function gmailInitial(auth:Record<string,string>,limit:number):Promise<Inc
  const profile=await fetch(providerUrl('https://gmail.googleapis.com/gmail/v1/users/me/profile'),{headers:auth});
  if(!profile.ok)throw Error(`Gmail не отдал профиль: ${(await profile.text()).slice(0,200)}`);
  const historyId=String((await profile.json())?.historyId??'');
- const list=await fetch(providerUrl(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${limit}`),{headers:auth});
+ const list=await fetch(providerUrl(`https://gmail.googleapis.com/gmail/v1/users/me/messages?labelIds=INBOX&maxResults=${limit}`),{headers:auth});
  if(!list.ok)throw Error(`Gmail не отдал входящие: ${(await list.text()).slice(0,200)}`);
  const ids=((await list.json())?.messages??[]).map((m:any)=>String(m.id));
  const out:(Incoming|null)[]=[];
@@ -54,7 +54,7 @@ async function gmailInitial(auth:Record<string,string>,limit:number):Promise<Inc
 }
 
 async function gmailHistory(auth:Record<string,string>,cursor:string,limit:number):Promise<IncrementalIncoming>{
- let url=providerUrl(`https://gmail.googleapis.com/gmail/v1/users/me/history?startHistoryId=${encodeURIComponent(cursor)}&historyTypes=messageAdded&maxResults=${limit}`);
+ let url=providerUrl(`https://gmail.googleapis.com/gmail/v1/users/me/history?startHistoryId=${encodeURIComponent(cursor)}&historyTypes=messageAdded&labelId=INBOX&maxResults=${limit}`);
  const ids:string[]=[];let latest=cursor;
  for(let page=0;page<20&&url;page++){
   const r=await fetch(url,{headers:auth});
@@ -63,7 +63,7 @@ async function gmailHistory(auth:Record<string,string>,cursor:string,limit:numbe
   const data=await r.json();latest=String(data?.historyId??latest);
   for(const h of data?.history??[])for(const added of h?.messagesAdded??[]){const id=String(added?.message?.id??'');if(id&&!ids.includes(id))ids.push(id);}
   const next=String(data?.nextPageToken??'');
-  url=next?providerUrl(`https://gmail.googleapis.com/gmail/v1/users/me/history?startHistoryId=${encodeURIComponent(cursor)}&historyTypes=messageAdded&maxResults=${limit}&pageToken=${encodeURIComponent(next)}`):'';
+  url=next?providerUrl(`https://gmail.googleapis.com/gmail/v1/users/me/history?startHistoryId=${encodeURIComponent(cursor)}&historyTypes=messageAdded&labelId=INBOX&maxResults=${limit}&pageToken=${encodeURIComponent(next)}`):'';
  }
  const out:(Incoming|null)[]=[];
  for(const id of ids.slice(-limit))out.push(await gmailMessage(id,auth));
