@@ -5,6 +5,7 @@ import {init} from './store';
 import {operations} from './operations';
 import {mailboxOperations} from './mailboxes';
 import {mailboxStatusView} from './mailboxstatusview';
+import {clearMailboxProviderHealth,recordMailboxProviderError} from './mailboxhealth';
 import {mountMailboxCallback} from './mailboxcallback';
 import {mountAuth} from './auth';
 import {mountMcp} from './mcp';
@@ -26,30 +27,28 @@ app.get('/api/health',(_req,res)=>res.json({ok:true}));
 const cors=(req:express.Request,res:express.Response)=>{
  const origin=req.headers.origin;
  if(!originAllowed(origin,req)){res.status(403).json({error:'Недопустимый источник запроса'});return false;}
- if(origin){
-  res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');
-  res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type');
-  res.setHeader('Access-Control-Allow-Methods','GET, POST, OPTIONS');
- }
+ if(origin){res.setHeader('Access-Control-Allow-Origin',origin);res.setHeader('Vary','Origin');res.setHeader('Access-Control-Allow-Headers','Authorization, Content-Type');res.setHeader('Access-Control-Allow-Methods','GET, POST, OPTIONS');}
  return true;
 };
 app.use('/api',(req,res,next)=>{if(!cors(req,res))return;if(req.method==='OPTIONS')return res.sendStatus(204);next();});
 mountAuth(app);
 
-/** Every workspace route acts as one signed-in account. There is no shared workspace any more. */
 declare global{namespace Express{interface Request{ctx?:Ctx;account?:Account;}}}
 app.use('/api',async(req,res,next)=>{
  if(req.path.startsWith('/auth/')||req.path==='/health')return next();
  const token=req.headers.authorization?.replace(/^Bearer /,'')??'';
  const account=await accountForSession(token);
  if(!account)return res.status(401).json({error:'Требуется вход'});
- req.account=account;
- req.ctx={accountId:account.id,email:account.email,role:account.role};
- next();
+ req.account=account;req.ctx={accountId:account.id,email:account.email,role:account.role};next();
 });
 
-const route=(fn:(ctx:Ctx,input:any)=>Promise<unknown>,status=200)=>async(req:express.Request,res:express.Response)=>
- res.status(status).json(await fn(req.ctx!,{...req.body,...req.params}));
+const route=(fn:(ctx:Ctx,input:any)=>Promise<unknown>,status=200)=>async(req:express.Request,res:express.Response)=>res.status(status).json(await fn(req.ctx!,{...req.body,...req.params}));
+const mailboxRoute=(fn:(ctx:Ctx,input:any)=>Promise<unknown>,status=200)=>async(req:express.Request,res:express.Response)=>{
+ const input={...req.body,...req.params};const email=String(input.email??'').trim().toLowerCase();
+ if(email)await clearMailboxProviderHealth(req.ctx!.accountId,email);
+ try{res.status(status).json(await fn(req.ctx!,input));}
+ catch(error){if(email)await recordMailboxProviderError(req.ctx!.accountId,email,error);throw error;}
+};
 
 app.get('/api/state',route(ctx=>operations.state(ctx)));
 app.get('/api/capabilities',route(ctx=>operations.capabilities(ctx)));
@@ -83,52 +82,35 @@ app.get('/api/threads',route(ctx=>operations.threads(ctx)));
 app.post('/api/threads/action',route((c,i)=>operations.setThreadAction(c,i)));
 app.post('/api/analytics',route((c,i)=>operations.analytics(c,i)));
 app.post('/api/demo',route((c,i)=>operations.setDemo(c,i)));
-app.get('/api/mailboxes/status',route(async ctx=>mailboxStatusView(await mailboxOperations.status(ctx))));
+app.get('/api/mailboxes/status',route(async ctx=>mailboxStatusView(await mailboxOperations.status(ctx),ctx.accountId)));
 app.get('/api/sender',route(ctx=>operations.senderStatus(ctx)));
 app.post('/api/mailboxes/detect',route((c,i)=>mailboxOperations.detect(c,i)));
 app.post('/api/mailboxes/oauth',route((c,i)=>mailboxOperations.startOauth(c,i)));
-app.post('/api/mailboxes/connect',route((c,i)=>mailboxOperations.connectMailbox(c,i)));
-app.post('/api/mailboxes/verify',route((c,i)=>mailboxOperations.verify(c,i)));
-app.post('/api/mailboxes/sync',route((c,i)=>mailboxOperations.syncReplies(c,i)));
-app.post('/api/mailboxes/test',route((c,i)=>mailboxOperations.testSend(c,i)));
-app.post('/api/mailboxes/disconnect',route((c,i)=>mailboxOperations.disconnect(c,i)));
+app.post('/api/mailboxes/connect',mailboxRoute((c,i)=>mailboxOperations.connectMailbox(c,i)));
+app.post('/api/mailboxes/verify',mailboxRoute((c,i)=>mailboxOperations.verify(c,i)));
+app.post('/api/mailboxes/sync',mailboxRoute((c,i)=>mailboxOperations.syncReplies(c,i)));
+app.post('/api/mailboxes/test',mailboxRoute((c,i)=>mailboxOperations.testSend(c,i)));
+app.post('/api/mailboxes/disconnect',mailboxRoute((c,i)=>mailboxOperations.disconnect(c,i)));
 
-/** Connection settings belong to the account and are entered in the interface, not the environment. */
 app.get('/api/settings/connections',route(async ctx=>maskSettings(await accountSettings(ctx.accountId))));
 app.post('/api/settings/connections',route((ctx,input)=>saveAccountSettings(ctx.accountId,input)));
 app.get('/api/settings/connector',route(async ctx=>({code:await connectorCode(ctx.accountId)})));
 app.post('/api/settings/connector',route(async ctx=>({code:await connectorCode(ctx.accountId,true)})));
 
-/** Superadmins manage who may enter. They never read another account's workspace. */
-const superadminOnly=(req:express.Request,res:express.Response,next:express.NextFunction)=>
- req.account?.role==='superadmin'?next():res.status(403).json({error:'Доступ только для суперадминов'});
+const superadminOnly=(req:express.Request,res:express.Response,next:express.NextFunction)=>req.account?.role==='superadmin'?next():res.status(403).json({error:'Доступ только для суперадминов'});
 app.get('/api/platform',superadminOnly,async(_req,res)=>res.json(maskPlatform(await platformSettings())));
 app.post('/api/platform',superadminOnly,async(req,res)=>res.json(await savePlatformSettings(req.body)));
-/** Platform mail is infrastructure, so its state is a superadmin's business and nobody else's. */
 app.get('/api/platform/mail',superadminOnly,(_req,res)=>res.json(systemMailStatus()));
-app.post('/api/platform/mail/test',superadminOnly,async(req,res)=>{
- const to=z.object({to:z.email().optional()}).parse(req.body??{}).to??req.account!.email;
- res.json(await testSystemMail(to));
-});
+app.post('/api/platform/mail/test',superadminOnly,async(req,res)=>{const to=z.object({to:z.email().optional()}).parse(req.body??{}).to??req.account!.email;res.json(await testSystemMail(to));});
 app.get('/api/accounts',superadminOnly,async(_req,res)=>res.json(await listAccounts()));
 app.post('/api/accounts/decide',superadminOnly,async(req,res)=>res.json(await decideAccount(req.account!,req.body)));
-/** Support view. A superadmin may look at an account's workspace and may not change it: this is
-    the only route that reads another account, it is a GET, and every use is written to a log the
-    superadmin cannot reach through the interface. Nothing here hands out a session for that
-    account, so no mutating route can ever run as somebody else. */
-app.get('/api/accounts/:id/workspace',superadminOnly,async(req,res)=>
- res.json(await supportView(req.account!,String(req.params.id))));
+app.get('/api/accounts/:id/workspace',superadminOnly,async(req,res)=>res.json(await supportView(req.account!,String(req.params.id))));
 app.get('/api/support-log',superadminOnly,async(_req,res)=>res.json(await supportLog()));
 
-/** Real sending. Every rule is re-applied per message inside send.ts, at the moment it leaves. */
 app.post('/api/campaigns/:id/send',route((c,i)=>operations.send(c,i)));
 app.post('/api/domains/:id/limit',route((c,i)=>operations.setDomainLimit(c,i)));
-/** The old workspace-wide endpoint never named a campaign, so it cannot mean anything now that
-    sending is real. It says where to go rather than pretending to have sent something. */
 app.post('/api/send',(_req,res)=>res.status(409).json({error:'Отправка выполняется по кампании: POST /api/campaigns/:id/send. Требуются проверенный ящик, суточный лимит домена и подтверждение первой партии.'}));
-mountMailboxCallback(app);
-mountOauth(app);
-mountMcp(app);
+mountMailboxCallback(app);mountOauth(app);mountMcp(app);
 app.use(express.static('dist'));app.get('/{*path}',(_req,res)=>res.sendFile('index.html',{root:'dist'}));
 app.use((err:any,_req:any,res:any,_next:any)=>res.status(err instanceof z.ZodError?400:422).json({error:err instanceof z.ZodError?err.issues.map((i:any)=>`${i.path.join('.')}: ${i.message}`).join('; '):err.message}));
 const {host,port}=bindAddress(process.env);
