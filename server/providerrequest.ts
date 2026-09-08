@@ -2,9 +2,12 @@ import {normalizeProviderError,retryDelayMs,type ProviderError} from './provider
 import {newCorrelationId,providerName,recordProviderEvent,type ProviderEvent} from './providerobservability';
 
 export type RequestMode='read'|'token'|'exchange'|'send';
+const machineCode=(error:ProviderError)=>error.class==='REAUTH_REQUIRED'?'EAUTH':
+ error.class==='RATE_LIMITED'?'ERATELIMIT':error.class==='RETRYABLE'?'ETEMPORARY':
+ error.class==='PERMANENT'?'EPERMANENT':'EPROVIDER';
 export class ProviderRequestError extends Error{
- readonly provider:ProviderError;
- constructor(provider:ProviderError){super(provider.detail||provider.code);this.name='ProviderRequestError';this.provider=provider;}
+ readonly provider:ProviderError;readonly code:string;
+ constructor(provider:ProviderError){super(provider.detail||provider.code);this.name='ProviderRequestError';this.provider=provider;this.code=machineCode(provider);}
 }
 
 type Options={mode:RequestMode;maxAttempts?:number;fetchFn?:typeof fetch;sleep?:(ms:number)=>Promise<void>;random?:()=>number;
