@@ -39,11 +39,25 @@ export function readiness(input:ReadinessInput):Readiness{
 const dnsOf=(domain:any)=>({spf:Boolean(domain?.dns?.spf),dkim:Boolean(domain?.dns?.dkim),
  dmarc:Boolean(domain?.dns?.dmarc),dnsCheckedAt:domain?.dns?.checkedAt??null});
 const checkOf=(value:any):Check=>value?.status==='ok'?'ok':value?.status==='failed'?'failed':'none';
+const time=(value:any)=>{const n=Date.parse(String(value??''));return Number.isFinite(n)?n:0;};
+
+/** A proof belongs to the credential/session that produced it. Reconnecting changes connectedAt,
+ * so an older success/failure must become pending rather than silently authorising the new token.
+ * Mailboxes from very old storage that have no connectedAt keep their legacy proof semantics until
+ * they reconnect; once they do, every new connection is protected by this generation boundary. */
+export function currentMailboxProof(mailbox:any,field:'auth'|'testSend'|'imap'|'incoming'){
+ const proof=mailbox?.[field];
+ if(!proof||typeof proof!=='object')return null;
+ const connected=time(mailbox?.connectedAt);
+ if(!connected)return proof;
+ const proved=time(proof?.at);
+ return proved>=connected&&proved>0?proof:null;
+}
 
 export function mailboxReadiness(domain:any,mailbox:any,stopped=false):Readiness{
  const base=readiness({stopped,connection:mailbox?.connection??'none',
-  auth:checkOf(mailbox?.auth),testSend:checkOf(mailbox?.testSend),
-  imap:checkOf(mailbox?.imap),incoming:checkOf(mailbox?.incoming),...dnsOf(domain)});
+  auth:checkOf(currentMailboxProof(mailbox,'auth')),testSend:checkOf(currentMailboxProof(mailbox,'testSend')),
+  imap:checkOf(currentMailboxProof(mailbox,'imap')),incoming:checkOf(currentMailboxProof(mailbox,'incoming')),...dnsOf(domain)});
  const failure=currentProviderFailure(mailbox);
  if(!failure)return base;
  const blocker=providerFailureBlocker(failure);

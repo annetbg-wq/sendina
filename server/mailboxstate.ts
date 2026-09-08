@@ -1,4 +1,4 @@
-import {mailboxReadiness} from './readiness';
+import {currentMailboxProof,mailboxReadiness} from './readiness';
 import {currentProviderFailure,type ProviderFailureClass} from './providerhealth';
 export type {ProviderFailureClass} from './providerhealth';
 
@@ -15,10 +15,14 @@ const pending=(value:any)=>!value||value.status==='none';
 export function mailboxState(domain:any,mailbox:any,stopped=false):MailboxStateView{
  const readiness=mailboxReadiness(domain,mailbox,stopped);
  const failure=currentProviderFailure(mailbox) as undefined|{class?:ProviderFailureClass;code?:string};
+ const auth=currentMailboxProof(mailbox,'auth');
+ const testSend=currentMailboxProof(mailbox,'testSend');
+ const incomingChannel=currentMailboxProof(mailbox,'imap');
+ const incoming=currentMailboxProof(mailbox,'incoming');
 
  if(mailbox?.connection==='none'||!mailbox?.connection)
   return {state:'DISCONNECTED',ready:false,blockers:readiness.blockers,action:'CONNECT'};
- if(failure?.class==='REAUTH_REQUIRED'||(failed(mailbox?.auth)&&mailbox?.auth?.code==='AUTH_REJECTED'))
+ if(failure?.class==='REAUTH_REQUIRED'||(failed(auth)&&auth?.code==='AUTH_REJECTED'))
   return {state:'REAUTH_REQUIRED',ready:false,blockers:readiness.blockers,action:'REAUTHENTICATE'};
  if(failure?.class==='PERMANENT')
   return {state:'ERROR',ready:false,blockers:readiness.blockers,action:'FIX_CONFIGURATION'};
@@ -27,9 +31,9 @@ export function mailboxState(domain:any,mailbox:any,stopped=false):MailboxStateV
   return {state:'DEGRADED',ready:false,blockers:readiness.blockers,action:'RETRY'};
  if(readiness.ready)
   return {state:'READY',ready:true,blockers:[],action:null};
- if(failed(mailbox?.auth)||failed(mailbox?.testSend)||failed(mailbox?.imap)||failed(mailbox?.incoming))
+ if(failed(auth)||failed(testSend)||failed(incomingChannel)||failed(incoming))
   return {state:'DEGRADED',ready:false,blockers:readiness.blockers,action:'RETRY'};
- if(pending(mailbox?.auth)||pending(mailbox?.testSend)||pending(mailbox?.imap)||pending(mailbox?.incoming))
+ if(pending(auth)||pending(testSend)||pending(incomingChannel)||pending(incoming))
   return {state:'CONNECTING',ready:false,blockers:readiness.blockers,action:'VERIFY'};
  return {state:'DEGRADED',ready:false,blockers:readiness.blockers,action:'REVIEW_BLOCKERS'};
 }
