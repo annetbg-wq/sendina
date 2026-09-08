@@ -3,6 +3,7 @@ import nodemailer from 'nodemailer';
 import {fetchIncoming,verifyImap,type Incoming,type ImapAccess} from './imap';
 import {limits} from './timeout';
 import {buildMime,toBase64Url,deterministicMessageId} from './mime';
+import {providerRequest,ProviderRequestError} from './providerrequest';
 
 export type Provider='google'|'microsoft'|'smtp';
 export type Detection={email:string;domain:string;provider:Provider;workspace:boolean;personal:boolean;mx:string[];note:string};
@@ -66,11 +67,10 @@ export const oauthReady=(provider:Provider,apps:MailApps)=>Boolean(oauthConfig(p
 export async function exchangeCode(provider:Provider,code:string,redirectUri:string,apps:MailApps){
  const config=oauthConfig(provider,apps);
  if(!config)throw Error('OAuth для этого провайдера не настроен платформой Sendina.');
- const r=await fetch(config.token,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+ const r=await providerRequest(config.token,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
   body:new URLSearchParams({grant_type:'authorization_code',code,redirect_uri:redirectUri,
-   client_id:config.clientId,client_secret:config.clientSecret})});
+   client_id:config.clientId,client_secret:config.clientSecret})},{mode:'exchange'});
  const data=await r.json();
- if(!r.ok)throw Error(`Провайдер отклонил обмен кода: ${data.error_description??data.error??r.status}`);
  if(!data.refresh_token)throw Error('Провайдер не выдал refresh token. Повторите подключение с запросом постоянного доступа.');
  return {refreshToken:String(data.refresh_token),accessToken:String(data.access_token??''),scope:String(data.scope??'')};
 }
@@ -78,11 +78,10 @@ export async function exchangeCode(provider:Provider,code:string,redirectUri:str
 async function accessToken(provider:Provider,refreshToken:string,apps:MailApps){
  const config=oauthConfig(provider,apps);
  if(!config)throw Error('OAuth для этого провайдера не настроен платформой Sendina.');
- const r=await fetch(config.token,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
+ const r=await providerRequest(config.token,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},
   body:new URLSearchParams({grant_type:'refresh_token',refresh_token:refreshToken,
-   client_id:config.clientId,client_secret:config.clientSecret})});
+   client_id:config.clientId,client_secret:config.clientSecret})},{mode:'token'});
  const data=await r.json();
- if(!r.ok)throw Error(`Не удалось обновить токен: ${data.error_description??data.error??r.status}`);
  return String(data.access_token);
 }
 
@@ -97,9 +96,9 @@ export async function sendMessage(secret:any,to:string,subject:string,text:strin
     messageId,inReplyTo:options.inReplyTo,references:options.references}));
    const body:any={raw};
    if(options.threadId)body.threadId=options.threadId;
-   const r=await fetch(providerUrl('https://gmail.googleapis.com/gmail/v1/users/me/messages/send'),
-    {method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify(body)});
-   if(!r.ok)throw Error(`Gmail отклонил отправку: ${(await r.text()).slice(0,300)}`);
+   const r=await providerRequest(providerUrl('https://gmail.googleapis.com/gmail/v1/users/me/messages/send'),
+    {method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify(body)},
+    {mode:'send'});
    const sent=await r.json();
    return {id:String(sent?.id??''),threadId:String(sent?.threadId??options.threadId??''),messageId,via:'Gmail API'};
   }
@@ -108,9 +107,9 @@ export async function sendMessage(secret:any,to:string,subject:string,text:strin
   const mime=buildMime({from,to,subject,text,html:options.html,replyTo:options.replyTo,
    messageId,inReplyTo:options.inReplyTo,references:options.references});
   const graphBody=Buffer.from(mime,'utf8').toString('base64');
-  const r=await fetch(providerUrl('https://graph.microsoft.com/v1.0/me/sendMail'),
-   {method:'POST',headers:{'Content-Type':'text/plain',Authorization:`Bearer ${token}`},body:graphBody});
-  if(!r.ok)throw Error(`Microsoft Graph отклонил отправку: ${(await r.text()).slice(0,300)}`);
+  await providerRequest(providerUrl('https://graph.microsoft.com/v1.0/me/sendMail'),
+   {method:'POST',headers:{'Content-Type':'text/plain',Authorization:`Bearer ${token}`},body:graphBody},
+   {mode:'send'});
   return {id:'',threadId:'',messageId,via:'Microsoft Graph'};
  }
  const transport=smtpTransport(secret);
@@ -166,27 +165,29 @@ export async function readIncoming(secret:any,apps:MailApps,limit=25):Promise<In
  const token=await accessToken(secret.provider,secret.refreshToken,apps);
  const auth={Authorization:`Bearer ${token}`};
  if(secret.provider==='google'){
-  const list=await fetch(providerUrl(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${limit}`),{headers:auth});
-  if(!list.ok)throw Error(`Gmail не отдал входящие: ${(await list.text()).slice(0,200)}`);
+  const list=await providerRequest(providerUrl(`https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${limit}`),{headers:auth},{mode:'read'});
   const ids=((await list.json())?.messages??[]).map((m:any)=>String(m.id));
   const out:Incoming[]=[];
   for(const id of ids.slice(0,limit)){
-   const r=await fetch(providerUrl(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`),{headers:auth});
-   if(!r.ok)continue;
-   const message=await r.json();
-   const headers:Record<string,string>={};
-   for(const h of message?.payload?.headers??[])headers[String(h.name).toLowerCase()]=String(h.value);
-   out.push({uid:0,from:(headers.from?.match(/<([^>]+)>/)?.[1]??headers.from??'').toLowerCase(),
-    subject:headers.subject??'',text:gmailText(message?.payload),
-    messageId:headers['message-id']??'',inReplyTo:headers['in-reply-to']??'',
-    references:(headers.references??'').split(/\s+/).filter(Boolean),
-    at:new Date(Number(message?.internalDate??Date.now())).toISOString(),
-    providerId:String(message?.id??id),threadId:String(message?.threadId??'')});
+   try{
+    const r=await providerRequest(providerUrl(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=full`),{headers:auth},{mode:'read'});
+    const message=await r.json();
+    const headers:Record<string,string>={};
+    for(const h of message?.payload?.headers??[])headers[String(h.name).toLowerCase()]=String(h.value);
+    out.push({uid:0,from:(headers.from?.match(/<([^>]+)>/)?.[1]??headers.from??'').toLowerCase(),
+     subject:headers.subject??'',text:gmailText(message?.payload),
+     messageId:headers['message-id']??'',inReplyTo:headers['in-reply-to']??'',
+     references:(headers.references??'').split(/\s+/).filter(Boolean),
+     at:new Date(Number(message?.internalDate??Date.now())).toISOString(),
+     providerId:String(message?.id??id),threadId:String(message?.threadId??'')});
+   }catch(e:any){
+    if(e instanceof ProviderRequestError&&e.provider.status===404)continue;
+    throw e;
+   }
   }
   return out;
  }
- const r=await fetch(providerUrl(`https://graph.microsoft.com/v1.0/me/messages?$top=${limit}`),{headers:auth});
- if(!r.ok)throw Error(`Microsoft Graph не отдал входящие: ${(await r.text()).slice(0,200)}`);
+ const r=await providerRequest(providerUrl(`https://graph.microsoft.com/v1.0/me/messages?$top=${limit}`),{headers:auth},{mode:'read'});
  return ((await r.json())?.value??[]).map((m:any)=>({uid:0,
   from:String(m?.from?.emailAddress?.address??'').toLowerCase(),
   subject:String(m?.subject??''),text:String(m?.body?.content??m?.bodyPreview??''),
