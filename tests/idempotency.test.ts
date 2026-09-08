@@ -19,11 +19,12 @@ test('an in-flight send becomes UNKNOWN after restart and cannot be automaticall
 
  normalize(s);
  assert.equal(s.messages[0].status,'unknown');
+ assert.equal(s.messages[0].deliveryState,'UNKNOWN');
  assert.match(s.messages[0].sendDetail,/Автоматический повтор запрещён/);
 
  const retry=reserve(s,'c1','m1',[]);
  assert.equal(retry.ok,false,'UNKNOWN must not re-enter the send path');
- if(!retry.ok)assert.equal(retry.reason,'ALREADY_SENT');
+ if(!retry.ok)assert.equal(retry.reason,'SEND_OUTCOME_UNKNOWN');
  assert.equal(s.domains[0].used,1,'uncertain delivery keeps its reserved quota until reconciled');
 });
 
@@ -31,7 +32,9 @@ test('normalization leaves confirmed drafts and sent messages unchanged',()=>{
  const draft={messages:[{id:'d',status:'draft'}],campaigns:[],domains:[],contacts:[],replies:[],suppressed:[],audit:[]};
  normalize(draft);
  assert.equal(draft.messages[0].status,'draft');
+ assert.equal(draft.messages[0].deliveryState,'QUEUED');
  const sent={messages:[{id:'s',status:'sent'}],campaigns:[],domains:[],contacts:[],replies:[],suppressed:[],audit:[]};
  normalize(sent);
  assert.equal(sent.messages[0].status,'sent');
+ assert.equal(sent.messages[0].deliveryState,'SENT');
 });
