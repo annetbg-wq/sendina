@@ -7,13 +7,13 @@ const apps={
  microsoft:{clientId:'m',clientSecret:'s',tenant:'common'}
 };
 
-test('provider capabilities are explicit and do not pretend every transport is identical',()=>{
- assert.deepEqual([...providerCapabilities('google')],['SEND','READ','THREADS','REPLY_DETECTION']);
- assert.deepEqual([...providerCapabilities('microsoft')],['SEND','READ','THREADS','REPLY_DETECTION']);
- assert.deepEqual([...providerCapabilities('smtp')],['SEND','READ','REPLY_DETECTION']);
- assert.equal(providerCapabilities('smtp').has('THREADS'),false);
- assert.equal(providerCapabilities('google').has('PUSH_NOTIFICATIONS'),false,
-  'push is not advertised until watch/subscription support actually exists');
+test('provider capabilities advertise only operations the contract can actually fulfill',()=>{
+ for(const kind of ['google','microsoft','smtp'] as const){
+  const caps=providerCapabilities(kind);
+  assert.deepEqual([...caps],['SEND','READ','REPLY_DETECTION']);
+  assert.equal(caps.has('THREADS'),false,'thread support is added only with real thread mapping');
+  assert.equal(caps.has('PUSH_NOTIFICATIONS'),false,'push is added only with watch/subscription support');
+ }
 });
 
 test('provider selection is centralized behind one contract',()=>{
