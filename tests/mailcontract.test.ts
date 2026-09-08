@@ -27,8 +27,14 @@ test('provider selection is centralized behind one runtime contract',()=>{
   assert.equal(typeof provider.sendMessage,'function');
   assert.equal(typeof provider.listMessages,'function');
   assert.equal(typeof provider.syncMessages,'function');
+  assert.equal(typeof provider.reconcileSent,'function');
   assert.equal(typeof provider.checkConnection,'function');
   assert.equal(typeof provider.checkIncoming,'function');
   assert.ok(provider.getCapabilities().has('SEND'));
  }
+});
+
+test('custom SMTP reports reconciliation unsupported instead of guessing',async()=>{
+ const custom=mailProvider({kind:'smtp',provider:'smtp',email:'a@example.com'},apps);
+ assert.deepEqual(await custom.reconcileSent('<message@example.com>'),{supported:false,evidence:null});
 });

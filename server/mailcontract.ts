@@ -1,5 +1,7 @@
 import type {Incoming} from './imap';
 import {readIncrementalIncoming,type InboundCursor,type IncrementalIncoming} from './inboundcursor';
+import {oauthAccessToken} from './oauthaccess';
+import {reconcileGmailSent,reconcileMicrosoftSent,type SentIdentity} from './sentreconcile';
 import {
   readIncoming,
   sendMessage,
@@ -37,11 +39,12 @@ export type MailSendInput={
 export type MailSendResult={id:string;threadId:string;messageId:string;via:string};
 export type MailSyncCursor=InboundCursor;
 export type MailSyncBatch=IncrementalIncoming;
+export type MailReconcileResult={supported:boolean;evidence:SentIdentity|null};
 
 /**
  * Stable transport contract used by Sendina above provider-specific details.
- * Gmail/Graph/SMTP differences stay behind this boundary; campaign and policy
- * code should never branch on a provider name.
+ * Gmail/Graph/SMTP differences stay behind this boundary; campaign, mailbox and
+ * recovery code should never branch on a provider name.
  */
 export interface MailProvider {
   readonly kind:Provider;
@@ -49,6 +52,7 @@ export interface MailProvider {
   sendMessage(input:MailSendInput):Promise<MailSendResult>;
   listMessages(limit?:number):Promise<Incoming[]>;
   syncMessages(cursor?:MailSyncCursor|null,limit?:number):Promise<MailSyncBatch>;
+  reconcileSent(rfcMessageId:string):Promise<MailReconcileResult>;
   checkConnection():Promise<string>;
   checkIncoming():Promise<string>;
 }
@@ -76,10 +80,20 @@ async function syncMessages(kind:Provider,secret:any,apps:MailApps,cursor:MailSy
   return {messages,cursor:next??null,reset:!cursor};
 }
 
+/** Provider evidence is also hidden behind the same boundary. SMTP/IMAP cannot safely prove an
+ * ambiguous send with the current credentials, so it reports unsupported rather than guessing. */
+async function reconcileSent(kind:Provider,secret:any,apps:MailApps,rfcMessageId:string):Promise<MailReconcileResult>{
+  if(kind==='smtp')return {supported:false,evidence:null};
+  const token=await oauthAccessToken(kind,secret.refreshToken,apps);
+  const evidence=kind==='google'
+    ?await reconcileGmailSent(token,rfcMessageId)
+    :await reconcileMicrosoftSent(token,rfcMessageId);
+  return {supported:true,evidence};
+}
+
 /**
- * Adapter over the existing production transports. The rest of Sendina can now
- * move to one runtime contract without rewriting the tested Gmail API / Graph /
- * SMTP-IMAP implementations underneath.
+ * Adapter over the existing production transports. The rest of Sendina uses one
+ * runtime contract without exposing Gmail API / Graph / SMTP-IMAP details.
  */
 export function mailProvider(secret:any,apps:MailApps):MailProvider{
   const kind:Provider=secret?.kind==='oauth'&&secret?.provider==='google'
@@ -96,6 +110,7 @@ export function mailProvider(secret:any,apps:MailApps):MailProvider{
     }),
     listMessages:limit=>readIncoming(secret,apps,limit),
     syncMessages:(cursor=null,limit=50)=>syncMessages(kind,secret,apps,cursor,limit),
+    reconcileSent:rfcMessageId=>reconcileSent(kind,secret,apps,rfcMessageId),
     checkConnection:()=>verifyAccess(secret,apps),
     checkIncoming:()=>verifyIncomingChannel(secret,apps)
   };

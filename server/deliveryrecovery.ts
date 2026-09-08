@@ -4,8 +4,7 @@ import {read,change} from './store';
 import type {Ctx} from './context';
 import type {State} from './seed';
 import {senderCredentials} from './mailboxes';
-import {oauthAccessToken} from './oauthaccess';
-import {reconcileGmailSent,reconcileMicrosoftSent,type SentIdentity} from './sentreconcile';
+import type {SentIdentity} from './sentreconcile';
 
 export const deliveryRecoverySchema=z.object({id:z.string().min(1)});
 export type DeliveryRecoveryOutcome='sent'|'pending'|'unsupported'|'already_resolved';
@@ -43,7 +42,8 @@ export function applyDeliveryEvidence(s:State,id:string,evidence:SentIdentity){
 }
 
 /** Reads provider evidence without ever resending the message. A miss means "not proven yet",
- * not "failed": the message remains UNKNOWN and its quota reservation remains intact. */
+ * not "failed": the message remains UNKNOWN and its quota reservation remains intact. Provider
+ * selection and OAuth details stay inside MailProvider. */
 export async function reconcileUnknownDelivery(ctx:Ctx,input:unknown){
  const {id}=deliveryRecoverySchema.parse(input);
  const before=await read(ctx.accountId);
@@ -60,17 +60,12 @@ export async function reconcileUnknownDelivery(ctx:Ctx,input:unknown){
 
  const credentials=await senderCredentials(ctx.accountId,senderEmail);
  if(!credentials)throw Error('Учётные данные исходящего ящика не найдены. Подключите ящик заново, не повторяя отправку.');
- const secret=credentials.secret;
- if(secret.kind!=='oauth'||!['google','microsoft'].includes(secret.provider))
+ const result=await credentials.provider.reconcileSent(rfcMessageId);
+ if(!result.supported)
   return {outcome:'unsupported' as DeliveryRecoveryOutcome,messageId:id,deliveryState:'UNKNOWN',
    reason:'PROVIDER_RECONCILIATION_UNSUPPORTED'};
-
- const token=await oauthAccessToken(secret.provider,secret.refreshToken,credentials.apps);
- const evidence=secret.provider==='google'
-  ?await reconcileGmailSent(token,rfcMessageId)
-  :await reconcileMicrosoftSent(token,rfcMessageId);
- if(!evidence)
+ if(!result.evidence)
   return {outcome:'pending' as DeliveryRecoveryOutcome,messageId:id,deliveryState:'UNKNOWN',
    reason:'DELIVERY_NOT_PROVEN_YET'};
- return change(ctx.accountId,s=>applyDeliveryEvidence(s,id,evidence));
+ return change(ctx.accountId,s=>applyDeliveryEvidence(s,id,result.evidence!));
 }
