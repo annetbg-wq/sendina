@@ -52,3 +52,25 @@ export async function deleteAuth(key:string){
  queue=job.catch(()=>{});
  return job;
 }
+
+/**
+ * Atomically consume a one-time value. PostgreSQL deletes and returns in one statement; the file
+ * fallback performs read/delete/write inside the same serialized queue. Two concurrent callers
+ * therefore cannot both receive the same OAuth state or login credential.
+ */
+export async function takeAuth<T>(key:string):Promise<T|null>{
+ await prepare();
+ if(pool)return (await pool.query('DELETE FROM auth_store WHERE key=$1 RETURNING data',[key])).rows[0]?.data??null;
+ const job=queue.then(async()=>{
+  const map=await readFileMap();
+  const value=(map[key]??null) as T|null;
+  if(value===null)return null;
+  delete map[key];
+  const temp=join(dir,`auth.${randomUUID()}.tmp`);
+  await writeFile(temp,JSON.stringify(map,null,2));
+  await rename(temp,file);
+  return value;
+ });
+ queue=job.catch(()=>{});
+ return job as Promise<T|null>;
+}
