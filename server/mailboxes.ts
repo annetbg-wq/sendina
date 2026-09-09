@@ -8,6 +8,7 @@ import {accountSettings} from './accountsettings';
 import type {Ctx} from './context';
 import {detectProvider,oauthConfig,oauthReady,exchangeCode,type Provider,type MailApps} from './mailproviders';
 import {mailProvider,type MailProvider,type MailSyncCursor} from './mailcontract';
+import {mailboxSyncSnapshot,inboundCommitGuard} from './inboundsyncguard';
 import {guessMailSettings,providerFallback,type MailSettings} from './autoconfig';
 import {platformSettings,resolveMailApps,appOwner} from './platform';
 import {sealFields,openFields} from './secrets';
@@ -295,12 +296,17 @@ export const mailboxOperations={
   const secret=await getSecret(ctx.accountId,email);
   if(!secret)throw Error('Ящик не подключён. Сначала подключите его.');
   const provider=mailProvider(secret,await appsFor(ctx.accountId));
-  const storedCursor=beforeMailbox.incomingCursor as MailSyncCursor|null|undefined;
-  const legacyUid=Number(beforeMailbox.incomingUid??0);
-  const cursor=storedCursor??(legacyUid>0?{provider:provider.kind,value:String(legacyUid)}:null);
+  const snapshot=mailboxSyncSnapshot(beforeMailbox,provider.kind);
+  const cursor=snapshot.cursor as MailSyncCursor|null;
   const batch=await provider.syncMessages(cursor,limit);
   const messages=batch.messages;
   return change(ctx.accountId,s=>{const {mailbox}=findMailbox(s,email);
+   const guard=inboundCommitGuard(snapshot,mailbox,provider.kind);
+   if(!guard.applyMessages){
+    audit(s,`Приём ответов ${email}: результат старой сессии подключения отброшен.`);
+    return {email,added:0,duplicates:0,unmatched:0,scanned:messages.length,cursorAdvanced:false,
+     reset:false,staleGeneration:true,cursorConflict:false};
+   }
    let added=0,unmatched=0,highest=Number(mailbox.incomingUid??0),duplicates=0;
    for(const message of messages){
     if(message.uid>highest)highest=message.uid;
@@ -328,9 +334,13 @@ ${message.text}`);
     added++;
    }
    mailbox.incomingUid=highest;
-   mailbox.incomingCursor=batch.cursor;
-   if(added||unmatched||duplicates||batch.reset)audit(s,`Приём ответов ${email}: добавлено ${added}, дубли ${duplicates}, без совпадения ${unmatched}${batch.reset?', курсор переустановлен':''}.`);
-   return {email,added,duplicates,unmatched,scanned:messages.length,cursorAdvanced:Boolean(batch.cursor),reset:batch.reset};});},
+   const cursorConflict=!guard.advanceCursor;
+   if(guard.advanceCursor)mailbox.incomingCursor=batch.cursor;
+   if(added||unmatched||duplicates||batch.reset||cursorConflict)audit(s,
+    `Приём ответов ${email}: добавлено ${added}, дубли ${duplicates}, без совпадения ${unmatched}${batch.reset&&guard.advanceCursor?', курсор переустановлен':''}${cursorConflict?', более новый курсор сохранён':''}.`);
+   return {email,added,duplicates,unmatched,scanned:messages.length,
+    cursorAdvanced:guard.advanceCursor&&Boolean(batch.cursor),reset:guard.advanceCursor?batch.reset:false,
+    staleGeneration:false,cursorConflict};});},
 
  status:async(ctx:Ctx)=>{const s=await read(ctx.accountId);
   return {stopped:s.stopped,domains:s.domains.map((d:any)=>({id:d.id,name:d.name,dns:d.dns,
